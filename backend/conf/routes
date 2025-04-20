@@ -1,0 +1,3 @@
+
+POST    /upload                  controllers.VideoController.upload
+GET     /download/:filename      controllers.VideoController.download(filename: String)

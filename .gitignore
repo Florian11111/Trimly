@@ -1,0 +1,81 @@
+# === Global ===
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# === Scala / sbt ===
+/backend/target/
+/backend/project/target/
+/backend/project/project/
+/backend/.idea/
+/backend/.bsp/
+/backend/.metals/
+/backend/.ammonite/
+/backend/.classpath
+/backend/.settings/
+/backend/.vscode/
+/backend/out/
+
+# === Node / Frontend ===
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.idea/
+/frontend/.vscode/
+/frontend/.parcel-cache/
+/frontend/.next/
+/frontend/build/
+
+# === OS / Editor / Misc ===
+*.iml
+*.ipr
+*.iws
+*.bak
+*.orig
+*.rej
+*.sublime-workspace
+*.sublime-project
+
+# === Docker ===
+**/Dockerfile*
+.dockerignore
+docker-compose.override.yml
+
+# === Uploads / Videos (optional if large files handled separately) ===
+/videos/
+*.mp4
+*.webm
+*.mov
+
+# === Environment / Secrets ===
+.env
+.env.local
+.env.*
+
+# === VSCode Workspace ===
+.vscode/
+
+
+# Scala / SBT
+/backend/target/
+*.log
+*.class
+*.jar
+*.war
+*.ear
+
+# IDE Configs
+.idea/
+.vscode/
+
+# Play Framework
+conf/application.conf
+conf/routes
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Local build files
+*.sbt.lock
