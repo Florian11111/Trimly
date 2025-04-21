@@ -1,0 +1,91 @@
+.App {
+  text-align: center;
+  font-family: Arial, sans-serif;
+  padding: 20px;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+h1 {
+  margin-bottom: 20px;
+}
+
+.dropzone {
+  border: 2px dashed #aaa;
+  border-radius: 10px;
+  padding: 30px;
+  background-color: #fafafa;
+  cursor: pointer;
+}
+
+.dropzone:hover {
+  background-color: #f0f0f0;
+}
+
+.player {
+  margin-top: 20px;
+}
+
+video {
+  border-radius: 10px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.timeline {
+  position: relative;
+  height: 10px;
+  background: #ccc;
+  margin: 10px 0 5px 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.progress {
+  height: 100%;
+  background: #007bff;
+  border-radius: 5px;
+}
+
+.range {
+  position: absolute;
+  top: -4px;
+  width: 8px;
+  height: 18px;
+  background: red;
+  border-radius: 2px;
+}
+
+.range.start {
+  background: green;
+}
+
+.range.end {
+  background: red;
+}
+
+.time-info {
+  display: flex;
+  justify-content: space-around;
+  font-size: 0.9rem;
+  margin-bottom: 10px;
+}
+
+button {
+  padding: 10px 20px;
+  background: #007bff;
+  color: white;
+  font-weight: bold;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+button:hover {
+  background: #0056b3;
+}
+
+button:disabled {
+  background: #aaa;
+  cursor: not-allowed;
+}
