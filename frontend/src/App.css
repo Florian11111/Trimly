@@ -24,6 +24,7 @@ h1 {
 
 .player {
   margin-top: 20px;
+  position: relative;
 }
 
 video {
@@ -88,4 +89,65 @@ button:hover {
 button:disabled {
   background: #aaa;
   cursor: not-allowed;
+}
+
+.sound-multiplier,
+.player-volume {
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+}
+
+.sound-multiplier label,
+.player-volume label {
+  font-size: 1rem;
+  color: #333;
+}
+
+.sound-multiplier input[type="range"],
+.player-volume input[type="range"] {
+  width: 200px;
+}
+
+.sound-multiplier span,
+.player-volume span {
+  font-size: 1rem;
+  color: #333;
+}
+ 
+.player-controls {
+  position: absolute;
+  bottom: -10%;  /* Erhöhe den Abstand nach unten */
+  left: 10px;
+  display: flex;
+  justify-content: space-between;
+  width: 95%;
+  align-items: center;
+}
+
+.hotkeys-legend {
+  background-color: #f4f4f4;
+  padding: 10px 20px;
+  border-radius: 6px;
+  margin-top: 20px;
+  text-align: left;
+  font-size: 0.9rem;
+  color: #333;
+}
+
+.hotkeys-legend h3 {
+  font-size: 1.2rem;
+  margin-bottom: 10px;
+  color: #007bff;
+}
+
+.hotkeys-legend ul {
+  list-style-type: none;
+  padding: 0;
+}
+
+.hotkeys-legend li {
+  margin-bottom: 5px;
 }

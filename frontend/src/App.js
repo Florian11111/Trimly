@@ -9,6 +9,8 @@ function App() {
   const [uploading, setUploading] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [volume, setVolume] = useState(1.0); // Sound multiplier state
+  const [playerVolume, setPlayerVolume] = useState(1.0); // Volume for the video player
   const videoRef = useRef(null);
   const progressBarRef = useRef(null);
 
@@ -18,10 +20,45 @@ function App() {
         e.preventDefault();
         togglePlayPause();
       }
+
+      // Skip 1 frame or 5 seconds
+      if (e.code === "Period") { // .
+        e.preventDefault();
+        skipTime(1 / 30); // Skip 1 frame (assuming 30fps)
+      } else if (e.code === "Comma") { // ,
+        e.preventDefault();
+        skipTime(-1 / 30); // Skip 1 frame backward
+      }
+
+      // Skip 5 seconds forward or backward
+      if (e.code === "ArrowRight") {
+        e.preventDefault();
+        skipTime(5); // Skip 5 seconds forward
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        skipTime(-5); // Skip 5 seconds backward
+      }
+
+      // Set start and end time to current video time
+      if (e.code === "KeyS") { // S for start
+        setStartTime(currentTime);
+      } else if (e.code === "KeyE") { // E for end
+        setEndTime(currentTime);
+      }
+
+      // Adjust volume with ArrowUp/ArrowDown
+      if (e.code === "ArrowUp") {
+        e.preventDefault();
+        changeVolume(0.05); // Increase volume
+      } else if (e.code === "ArrowDown") {
+        e.preventDefault();
+        changeVolume(-0.05); // Decrease volume
+      }
     };
+
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [currentTime, volume]);
 
   const togglePlayPause = () => {
     const video = videoRef.current;
@@ -29,6 +66,19 @@ function App() {
       video.play();
     } else {
       video.pause();
+    }
+  };
+
+  const skipTime = (time) => {
+    const video = videoRef.current;
+    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + time));
+  };
+
+  const changeVolume = (amount) => {
+    const newVolume = Math.min(1, Math.max(0, playerVolume + amount));
+    setPlayerVolume(newVolume);
+    if (videoRef.current) {
+      videoRef.current.volume = newVolume;
     }
   };
 
@@ -78,6 +128,7 @@ function App() {
     formData.append("video", videoFile);
     formData.append("startTime", Math.floor(startTime * 1000)); // in ms
     formData.append("endTime", Math.floor(endTime * 1000));     // in ms
+    formData.append("volume", volume); // Send volume multiplier to backend
 
     try {
       const response = await fetch("http://localhost:9000/upload", {
@@ -104,6 +155,29 @@ function App() {
     setUploading(false);
   };
 
+  const handleVolumeChange = (e) => {
+    const newVolume = parseFloat(e.target.value);
+    setPlayerVolume(newVolume); // Setzt den Player-Volume-Wert
+    if (videoRef.current) {
+      videoRef.current.volume = newVolume; // Setzt die Lautstärke direkt im Video-Tag
+    }
+  };
+
+  const handleSoundMultiplierChange = (e) => {
+    const newVolume = parseFloat(e.target.value);
+    setVolume(newVolume); // Setzt den Volume-Wert
+    if (videoRef.current) {
+      videoRef.current.volume = playerVolume * newVolume; // Setzt die Lautstärke basierend auf dem Player-Volume und dem Sound-Multiplier
+    }
+  };
+
+  // Ensure that endTime is always greater than startTime
+  useEffect(() => {
+    if (endTime <= startTime) {
+      setEndTime(startTime + 1); // Set endTime to be just slightly greater than startTime
+    }
+  }, [startTime, endTime]);
+
   return (
     <div className="App">
       <h1>🎬 Video Upload & Trim</h1>
@@ -122,6 +196,7 @@ function App() {
               onTimeUpdate={handleTimeUpdate}
               onClick={togglePlayPause}
               style={{ width: "100%", maxHeight: "360px", cursor: "pointer" }}
+              volume={playerVolume} // Apply the player volume
             />
             <div
               className="timeline"
@@ -151,6 +226,37 @@ function App() {
               Klick auf Timeline = springen <br />
               ⇧ Shift+Klick = Start setzen, ⎇ Alt+Klick = Ende setzen
             </p>
+
+            {/* Sound Multiplier and Volume Control inside the Player */}
+            <div className="player-controls">
+              {/* Sound Multiplier */}
+              <div className="sound-multiplier">
+                <label>Sound Multiplier:</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  value={volume}
+                  onChange={handleSoundMultiplierChange}
+                />
+                <span>{volume.toFixed(1)}x</span>
+              </div>
+
+              {/* Video Player Volume Control */}
+              <div className="player-volume">
+                <label>Volume:</label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={playerVolume}
+                  onChange={handleVolumeChange}
+                />
+                <span>{(playerVolume * 100).toFixed(0)}%</span>
+              </div>
+            </div>
           </div>
         ) : (
           <p>Zieh ein Video hierher oder klick zum Auswählen.</p>
@@ -162,6 +268,22 @@ function App() {
           {uploading ? "Hochladen..." : "Hochladen & Zuschneiden"}
         </button>
       )}
+
+      {/* Hotkeys Legend */}
+      <div className="hotkeys-legend">
+        <h3>Hotkeys:</h3>
+        <ul>
+          <li>Space: Play/Pause</li>
+          <li>., ArrowRight: Skip 1 frame</li>
+          <li>,, ArrowLeft: Skip 5 seconds</li>
+          <li>Shift + Click: Set Start time</li>
+          <li>Alt + Click: Set End time</li>
+          <li>S: Set Start time to current video time</li>
+          <li>E: Set End time to current video time</li>
+          <li>ArrowUp: Increase Volume</li>
+          <li>ArrowDown: Decrease Volume</li>
+        </ul>
+      </div>
     </div>
   );
 }
