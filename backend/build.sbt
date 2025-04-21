@@ -9,9 +9,6 @@ scalaVersion := "2.13.16"
 
 libraryDependencies += guice
 libraryDependencies += "org.scalatestplus.play" %% "scalatestplus-play" % "7.0.1" % Test
-
-// Adds additional packages into Twirl
-//TwirlKeys.templateImports += "com.example.controllers._"
-
-// Adds additional packages into conf/routes
-// play.sbt.routes.RoutesKeys.routesImport += "com.example.binders._"
+libraryDependencies += "com.typesafe.akka" %% "akka-actor" % "2.6.21"
+libraryDependencies += "org.apache.pekko" %% "pekko-actor" % "1.0.2"
+libraryDependencies += "org.apache.pekko" %% "pekko-stream" % "1.0.2"
