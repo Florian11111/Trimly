@@ -116,7 +116,7 @@ button:disabled {
   font-size: 1rem;
   color: #333;
 }
- 
+
 .player-controls {
   position: absolute;
   bottom: -10%;  /* Erhöhe den Abstand nach unten */
@@ -125,6 +125,33 @@ button:disabled {
   justify-content: space-between;
   width: 95%;
   align-items: center;
+}
+
+.limit-size-option {
+  margin-top: 1rem;
+  padding: 10px;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  border: 1px solid #ddd;
+}
+
+.limit-size-option label {
+  font-size: 1rem;
+  color: #333;
+}
+
+.limit-size-option input[type="number"] {
+  width: 80px;
+  padding: 5px;
+  margin-top: 5px;
+  font-size: 0.9rem;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+.limit-size-option input[type="checkbox"] {
+  margin-right: 10px;
 }
 
 .hotkeys-legend {

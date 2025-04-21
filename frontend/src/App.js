@@ -9,10 +9,22 @@ function App() {
   const [uploading, setUploading] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [volume, setVolume] = useState(1.0); // Sound multiplier state
-  const [playerVolume, setPlayerVolume] = useState(1.0); // Volume for the video player
+  const [volume, setVolume] = useState(1.0);
+  const [playerVolume, setPlayerVolume] = useState(1.0);
+  const [limitSize, setLimitSize] = useState(false);
+  const [maxSizeMb, setMaxSizeMb] = useState(100);
+  const [changeResolution, setChangeResolution] = useState(false);
+  const [resolution, setResolution] = useState("720p");
+  const [customWidth, setCustomWidth] = useState("");
+  const [customHeight, setCustomHeight] = useState("");
   const videoRef = useRef(null);
   const progressBarRef = useRef(null);
+
+  const resolutionMapping = {
+    "720p": { width: 1280, height: 720 },
+    "1080p": { width: 1920, height: 1080 },
+    "480p": { width: 854, height: 480 },
+  };
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -21,38 +33,34 @@ function App() {
         togglePlayPause();
       }
 
-      // Skip 1 frame or 5 seconds
-      if (e.code === "Period") { // .
+      if (e.code === "Period") {
         e.preventDefault();
-        skipTime(1 / 30); // Skip 1 frame (assuming 30fps)
-      } else if (e.code === "Comma") { // ,
+        skipTime(1 / 30);
+      } else if (e.code === "Comma") {
         e.preventDefault();
-        skipTime(-1 / 30); // Skip 1 frame backward
+        skipTime(-1 / 30);
       }
 
-      // Skip 5 seconds forward or backward
       if (e.code === "ArrowRight") {
         e.preventDefault();
-        skipTime(5); // Skip 5 seconds forward
+        skipTime(5);
       } else if (e.code === "ArrowLeft") {
         e.preventDefault();
-        skipTime(-5); // Skip 5 seconds backward
+        skipTime(-5);
       }
 
-      // Set start and end time to current video time
-      if (e.code === "KeyS") { // S for start
+      if (e.code === "KeyS") {
         setStartTime(currentTime);
-      } else if (e.code === "KeyE") { // E for end
+      } else if (e.code === "KeyE") {
         setEndTime(currentTime);
       }
 
-      // Adjust volume with ArrowUp/ArrowDown
       if (e.code === "ArrowUp") {
         e.preventDefault();
-        changeVolume(0.05); // Increase volume
+        changeVolume(0.05);
       } else if (e.code === "ArrowDown") {
         e.preventDefault();
-        changeVolume(-0.05); // Decrease volume
+        changeVolume(-0.05);
       }
     };
 
@@ -126,9 +134,24 @@ function App() {
 
     const formData = new FormData();
     formData.append("video", videoFile);
-    formData.append("startTime", Math.floor(startTime * 1000)); // in ms
-    formData.append("endTime", Math.floor(endTime * 1000));     // in ms
-    formData.append("volume", volume); // Send volume multiplier to backend
+    formData.append("startTime", Math.floor(startTime * 1000));
+    formData.append("endTime", Math.floor(endTime * 1000));
+    formData.append("volume", volume);
+    if (limitSize) {
+      formData.append("maxSizeMb", maxSizeMb);
+    }
+
+    if (changeResolution) {
+      let resolutionWidth = customWidth;
+      let resolutionHeight = customHeight;
+
+      if (resolution !== "custom") {
+        resolutionWidth = resolutionMapping[resolution].width;
+        resolutionHeight = resolutionMapping[resolution].height;
+      }
+
+      formData.append("resolution", `${resolutionWidth}x${resolutionHeight}`);
+    }
 
     try {
       const response = await fetch("http://localhost:9000/upload", {
@@ -157,24 +180,23 @@ function App() {
 
   const handleVolumeChange = (e) => {
     const newVolume = parseFloat(e.target.value);
-    setPlayerVolume(newVolume); // Setzt den Player-Volume-Wert
+    setPlayerVolume(newVolume);
     if (videoRef.current) {
-      videoRef.current.volume = newVolume; // Setzt die Lautstärke direkt im Video-Tag
+      videoRef.current.volume = newVolume;
     }
   };
 
   const handleSoundMultiplierChange = (e) => {
     const newVolume = parseFloat(e.target.value);
-    setVolume(newVolume); // Setzt den Volume-Wert
+    setVolume(newVolume);
     if (videoRef.current) {
-      videoRef.current.volume = playerVolume * newVolume; // Setzt die Lautstärke basierend auf dem Player-Volume und dem Sound-Multiplier
+      videoRef.current.volume = playerVolume * newVolume;
     }
   };
 
-  // Ensure that endTime is always greater than startTime
   useEffect(() => {
     if (endTime <= startTime) {
-      setEndTime(startTime + 1); // Set endTime to be just slightly greater than startTime
+      setEndTime(startTime + 1);
     }
   }, [startTime, endTime]);
 
@@ -196,7 +218,7 @@ function App() {
               onTimeUpdate={handleTimeUpdate}
               onClick={togglePlayPause}
               style={{ width: "100%", maxHeight: "360px", cursor: "pointer" }}
-              volume={playerVolume} // Apply the player volume
+              volume={playerVolume}
             />
             <div
               className="timeline"
@@ -222,14 +244,8 @@ function App() {
               <span>Ende: {endTime.toFixed(1)}s</span>
               <span>Aktuell: {currentTime.toFixed(1)}s</span>
             </div>
-            <p style={{ fontSize: "0.9rem", color: "#888" }}>
-              Klick auf Timeline = springen <br />
-              ⇧ Shift+Klick = Start setzen, ⎇ Alt+Klick = Ende setzen
-            </p>
 
-            {/* Sound Multiplier and Volume Control inside the Player */}
             <div className="player-controls">
-              {/* Sound Multiplier */}
               <div className="sound-multiplier">
                 <label>Sound Multiplier:</label>
                 <input
@@ -243,7 +259,6 @@ function App() {
                 <span>{volume.toFixed(1)}x</span>
               </div>
 
-              {/* Video Player Volume Control */}
               <div className="player-volume">
                 <label>Volume:</label>
                 <input
@@ -257,32 +272,79 @@ function App() {
                 <span>{(playerVolume * 100).toFixed(0)}%</span>
               </div>
             </div>
+
+            <div className="limit-size-option" style={{ marginTop: "1rem" }}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={limitSize}
+                  onChange={(e) => setLimitSize(e.target.checked)}
+                />
+                Max. Dateigröße (MB)
+              </label>
+              {limitSize && (
+                <input
+                  type="number"
+                  min="1"
+                  value={maxSizeMb}
+                  onChange={(e) => setMaxSizeMb(e.target.value)}
+                />
+              )}
+            </div>
+
+            <div className="resolution-option" style={{ marginTop: "1rem" }}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={changeResolution}
+                  onChange={(e) => setChangeResolution(e.target.checked)}
+                />
+                Auflösung ändern
+              </label>
+
+              {changeResolution && (
+                <div className="resolution-dropdown">
+                  <select
+                    value={resolution}
+                    onChange={(e) => setResolution(e.target.value)}
+                  >
+                    <option value="720p">720p</option>
+                    <option value="1080p">1080p</option>
+                    <option value="480p">480p</option>
+                    <option value="custom">Benutzerdefiniert</option>
+                  </select>
+
+                  {resolution === "custom" && (
+                    <div>
+                      <label>Breite:</label>
+                      <input
+                        type="number"
+                        value={customWidth}
+                        onChange={(e) => setCustomWidth(e.target.value)}
+                      />
+                      <label>Höhe:</label>
+                      <input
+                        type="number"
+                        value={customHeight}
+                        onChange={(e) => setCustomHeight(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <button
+              className="upload-button"
+              onClick={handleUpload}
+              disabled={uploading}
+            >
+              {uploading ? "Hochladen..." : "Hochladen"}
+            </button>
           </div>
         ) : (
-          <p>Zieh ein Video hierher oder klick zum Auswählen.</p>
+          <p>Ziehe eine Videodatei hierher oder klicke, um eine Datei auszuwählen</p>
         )}
-      </div>
-
-      {videoFile && (
-        <button onClick={handleUpload} disabled={uploading}>
-          {uploading ? "Hochladen..." : "Hochladen & Zuschneiden"}
-        </button>
-      )}
-
-      {/* Hotkeys Legend */}
-      <div className="hotkeys-legend">
-        <h3>Hotkeys:</h3>
-        <ul>
-          <li>Space: Play/Pause</li>
-          <li>., ArrowRight: Skip 1 frame</li>
-          <li>,, ArrowLeft: Skip 5 seconds</li>
-          <li>Shift + Click: Set Start time</li>
-          <li>Alt + Click: Set End time</li>
-          <li>S: Set Start time to current video time</li>
-          <li>E: Set End time to current video time</li>
-          <li>ArrowUp: Increase Volume</li>
-          <li>ArrowDown: Decrease Volume</li>
-        </ul>
       </div>
     </div>
   );
