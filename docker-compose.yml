@@ -6,7 +6,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend:/app
+    #  - ./frontend:/app
       - /app/node_modules
     stdin_open: true
     tty: true
@@ -17,7 +17,7 @@ services:
       dockerfile: Dockerfile
     ports:
       - "9000:9000"
-    volumes:
-      - ./backend:/app
+    #volumes:
+    #  - ./backend:/app
     stdin_open: true
     tty: true
