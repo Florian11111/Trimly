@@ -38,7 +38,6 @@ Thumbs.db
 *.sublime-project
 
 # === Docker ===
-**/Dockerfile*
 .dockerignore
 docker-compose.override.yml
 

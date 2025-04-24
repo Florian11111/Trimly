@@ -7,8 +7,8 @@ import java.nio.file.Paths
 
 object FFmpegUtils {
 
-  private val ffmpegPath = "C:\\Users\\flori\\Documents\\ffmpeg\\bin\\ffmpeg"
-  private val ffprobePath = "C:\\Users\\flori\\Documents\\ffmpeg\\bin\\ffprobe"
+  private val ffmpegPath = "ffmpeg"
+  private val ffprobePath = "ffprobe"
 
   def getVideoDurationMs(videoPath: String): Option[Long] = {
     val ffprobeCommand = Seq(
@@ -29,14 +29,14 @@ object FFmpegUtils {
   }
 
   def processVideo(
-    videoPath: String, 
-    startTimeMs: Long, 
-    endTimeMs: Long, 
-    volumeFactor: Double, 
-    outputDir: File, 
-    width: Option[Int] = None,  
-    height: Option[Int] = None, 
-    threads: Int = 6 
+    videoPath: String,
+    startTimeMs: Long,
+    endTimeMs: Long,
+    volumeFactor: Double,
+    outputDir: File,
+    width: Option[Int] = None,
+    height: Option[Int] = None,
+    threads: Int = 6
     ): Option[File] = {
 
         println(s"Processing video: $videoPath")
@@ -51,10 +51,10 @@ object FFmpegUtils {
         val endSeconds = endTimeMs / 1000.0
 
         val resolutionFilter = (width, height) match {
-  case (Some(w), Some(h)) => 
+  case (Some(w), Some(h)) =>
     println(s"Resolution Filter: scale=$w:$h") // Debug: Zeige den Filter
     Some(s"-vf scale=$w:$h") // Verwendet -vf statt -filter:v
-  case _ => 
+  case _ =>
     println("No resolution filter applied.") // Debug: Keine Auflösung angegeben
     None
 }
@@ -68,7 +68,7 @@ val ffmpegCommand = {
     "-i", videoPath,
     "-filter:a", s"volume=$volumeFactor"
   )
-  
+
   // Wenn der Filter existiert, füge ihn der Basis-Command-Liste hinzu
   resolutionFilter match {
     case Some(filter) => baseCommand :+ filter
@@ -78,7 +78,7 @@ val ffmpegCommand = {
   "-c:v", "libx264",     // Software-codierung statt NVENC
   "-c:a", "aac",
   "-strict", "experimental",
-  "-threads", threads.toString, 
+  "-threads", threads.toString,
   "-f", "mp4",            // Hier wird das Format explizit gesetzt
   outputFilePath
 )
