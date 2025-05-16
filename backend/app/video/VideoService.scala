@@ -51,14 +51,14 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     })
 
 
-    val videoDuration = FFmpegUtils.getVideoDurationMs(tempPath.toString).getOrElse(0L)
+    //val videoDuration = FFmpegUtils.getVideoDurationMs(tempPath.toString).getOrElse(0L)
 
     if (startTime < 0)
       Left("Start time must be non-negative.")
     else if (startTime > endTime)
       Left("Start time must be less than or equal to end time.")
-    else if (endTime > videoDuration)
-      Left(s"End time must be less than video duration (${videoDuration} ms).")
+    //else if (endTime > videoDuration)
+      //Left(s"End time must be less than video duration (${videoDuration} ms).")
     else {
       // Schritt 1: Video zuschneiden
       val trimmedVideo = FFmpegUtils.processVideo(tempPath.toString, startTime, endTime, volume, processedDir, resolution.map(r => r._1), resolution.map(r => r._2))
@@ -68,37 +68,16 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
           // Schritt 2: Überprüfen, ob das Video bereits klein genug ist
           val fileSizeMb = trimmedFile.length() / (1024.0 * 1024.0)  // Umrechnung in MB
 
-          if (maxSizeMb != -1 && fileSizeMb > maxSizeMb) {
-            val compressedVideo = FFmpegUtils.compressVideo(trimmedFile.getAbsolutePath, maxSizeMb, processedDir)
-            
-            compressedVideo match {
-              case Some(compressedFile: File) =>  // Sicherstellen, dass es sich um ein File handelt
-                scheduleDeleteAfterDelay(compressedFile)
-                Right(UploadResult(
-                  status = "success",
-                  filename = filename,
-                  startTime = startTime,
-                  endTime = endTime,
-                  volume = volume,
-                  message = "File uploaded, trimmed, and compressed successfully",
-                  processedVideo = s"/download/${compressedFile.getName}"
-                ))
-              case None =>
-                Left("Error compressing video")
-            }
-          } else {
-            // Kein Komprimieren nötig, Video ist klein genug
-            scheduleDeleteAfterDelay(trimmedFile)
-            Right(UploadResult(
-              status = "success",
-              filename = filename,
-              startTime = startTime,
-              endTime = endTime,
-              volume = volume,
-              message = "File uploaded and trimmed successfully",
-              processedVideo = s"/download/${trimmedFile.getName}"
-            ))
-          }
+          scheduleDeleteAfterDelay(trimmedFile)
+          Right(UploadResult(
+            status = "success",
+            filename = filename,
+            startTime = startTime,
+            endTime = endTime,
+            volume = volume,
+            message = "File uploaded and trimmed successfully",
+            processedVideo = s"/download/${trimmedFile.getName}"
+          ))
         case None => Left("Error processing video")
       }
     }
