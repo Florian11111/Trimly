@@ -21,3 +21,8 @@ services:
     #  - ./backend:/app
     stdin_open: true
     tty: true
+
+
+# command to build and run
+
+# docker compose up --build

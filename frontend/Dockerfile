@@ -18,3 +18,7 @@ EXPOSE 3000
 
 # Starte die Anwendung im Entwicklungsmodus
 CMD ["npm", "start"]
+
+# comment to build and run container
+# docker build -t frontend .
+# docker run -p 3000:3000 frontend
