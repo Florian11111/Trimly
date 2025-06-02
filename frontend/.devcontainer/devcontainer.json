@@ -1,0 +1,21 @@
+{
+  "name": "Node.js Frontend Dev Container",
+  "build": {
+    "dockerfile": "../Dockerfile",   // Wenn dein Dockerfile im übergeordneten Verzeichnis liegt
+    "context": ".."
+  },
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash"
+  },
+  "extensions": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "ms-vscode.vscode-typescript-next"
+  ],
+  "forwardPorts": [3000],
+  "postCreateCommand": "npm install",
+  "remoteUser": "node",
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached"
+  ]
+}

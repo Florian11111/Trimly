@@ -29,3 +29,4 @@ CMD ["sbt", "run"]
 #comment to bield and run container
 # docker build -t backend .
 # docker run -p 9000:9000 backend
+

@@ -5,7 +5,7 @@ import play.api.mvc.MultipartFormData
 import scala.concurrent.{ExecutionContext, Future}
 import java.io.File
 import java.nio.file.{Paths, Path}
-import scala.util.{Random, Success, Failure}
+import scala.util.{Random, Success, Failure, Try}
 import javax.inject._
 import video.FFmpegUtils
 import scala.concurrent.duration._
@@ -38,50 +38,60 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     val tempPath = tempDir.toPath.resolve(filename)
     video.ref.copyTo(tempPath.toFile, replace = true)
 
-    val startTime = data.dataParts.get("startTime").flatMap(_.headOption).map(_.toLong).getOrElse(0L)
-    val endTime = data.dataParts.get("endTime").flatMap(_.headOption).map(_.toLong).getOrElse(0L)
-    val volume = data.dataParts.get("volume").flatMap(_.headOption).map(_.toDouble).getOrElse(1.0)
-    val maxSizeMb = data.dataParts.get("maxSizeMb").flatMap(_.headOption).flatMap(s => scala.util.Try(s.toDouble).toOption).getOrElse(-1.0)
+    val startTime = data.dataParts.get("startTime").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption).getOrElse(0L)
+    val endTime   = data.dataParts.get("endTime").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption).getOrElse(0L)
+    val volume    = data.dataParts.get("volume").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(1.0)
+    val maxSizeMb = data.dataParts.get("maxSizeMb").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(-1.0)
+    val bitrate   = data.dataParts.get("bitrate").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption)
+    val framerate = data.dataParts.get("framerate").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption)
 
     val resolution = data.dataParts.get("resolution")
-    .flatMap(_.headOption)
-    .flatMap(s => s.split("x").map(_.toIntOption).toList match {
+      .flatMap(_.headOption)
+      .flatMap(s => s.split("x").map(_.toIntOption).toList match {
         case List(Some(w), Some(h)) => Some((w, h))
         case _ => None
-    })
+      })
 
-
-    //val videoDuration = FFmpegUtils.getVideoDurationMs(tempPath.toString).getOrElse(0L)
-
+    // Optional: Hier könntest du getVideoDurationMs verwenden, um Grenzwerte zu prüfen
     if (startTime < 0)
       Left("Start time must be non-negative.")
     else if (startTime > endTime)
       Left("Start time must be less than or equal to end time.")
-    //else if (endTime > videoDuration)
-      //Left(s"End time must be less than video duration (${videoDuration} ms).")
     else {
-      // Schritt 1: Video zuschneiden
-      val trimmedVideo = FFmpegUtils.processVideo(tempPath.toString, startTime, endTime, volume, processedDir, resolution.map(r => r._1), resolution.map(r => r._2))
+      val trimmedVideo = FFmpegUtils.processVideo(
+        videoPath    = tempPath.toString,
+        startTimeMs  = startTime,
+        endTimeMs    = endTime,
+        volumeFactor = volume,
+        outputDir    = processedDir,
+        framerate    = framerate,
+        bitrate      = bitrate,
+        width        = resolution.map(_._1),
+        height       = resolution.map(_._2)
+      )
 
       trimmedVideo match {
-        case Some(trimmedFile: File) =>  // Sicherstellen, dass es sich um ein File handelt
-          // Schritt 2: Überprüfen, ob das Video bereits klein genug ist
-          val fileSizeMb = trimmedFile.length() / (1024.0 * 1024.0)  // Umrechnung in MB
-
-          scheduleDeleteAfterDelay(trimmedFile)
-          Right(UploadResult(
-            status = "success",
-            filename = filename,
-            startTime = startTime,
-            endTime = endTime,
-            volume = volume,
-            message = "File uploaded and trimmed successfully",
-            processedVideo = s"/download/${trimmedFile.getName}"
-          ))
-        case None => Left("Error processing video")
+        case Some(file) =>
+          val sizeMb = file.length() / (1024.0 * 1024.0)
+          if (maxSizeMb > 0 && sizeMb > maxSizeMb) {
+            file.delete()
+            Left(f"Video is too large (${sizeMb}%.2f MB), must be under ${maxSizeMb} MB.")
+          } else {
+            scheduleDeleteAfterDelay(file)
+            Right(UploadResult(
+              status = "success",
+              filename = filename,
+              startTime = startTime,
+              endTime = endTime,
+              volume = volume,
+              message = "File uploaded and trimmed successfully",
+              processedVideo = s"/download/${file.getName}"
+            ))
+          }
+        case None => Left("Error processing video.")
       }
     }
-}
+  }
 
 
   def getProcessedVideoFile(filename: String): Option[File] = {

@@ -1,0 +1,21 @@
+{
+  "name": "Scala Play Framework Dev Container",
+  "build": {
+    "dockerfile": "../Dockerfile",     // Pfad zum übergeordneten Dockerfile
+    "context": ".."                     // Kontext muss übereinstimmen
+  },
+  "settings": {
+    "terminal.integrated.shell.linux": "/bin/bash"
+  },
+  "extensions": [
+    "scala-lang.scala",
+    "ms-vscode.sbt",
+    "ms-azuretools.vscode-docker"
+  ],
+  "forwardPorts": [9000],
+  "postCreateCommand": "sbt update",
+  "remoteUser": "root",
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/app,type=bind,consistency=cached"
+  ]
+}

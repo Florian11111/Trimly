@@ -7,6 +7,7 @@ import java.nio.file.Paths
 import upickle.default._
 import scala.util.matching.Regex
 
+
 object FFmpegUtils {
 
   private val ffmpegPath = "ffmpeg"
@@ -69,56 +70,11 @@ object FFmpegUtils {
 
     } catch {
       case e: Exception =>
-        println(s"Error getting video info: ${e.getMessage}")
+        println(s"Error getting info: ${e.getMessage}")
         None
     }
   }
 
-  def getAudioInfo(filepath: String): Option[Map[String, Any]] = {
-    val ffmpegCmd = Seq(
-      "ffmpeg",
-      "-i", filepath,
-      "-af", "volumedetect",
-      "-f", "null",
-      "-"
-    )
-
-    try {
-      val stderrBuffer = new StringBuilder
-      val logger = ProcessLogger(
-        _ => (), // stdout ignorieren
-        err => stderrBuffer.append(err + "\n") // stderr sammeln
-      )
-
-      ffmpegCmd.!(logger) // Prozess ausführen
-
-      val output = stderrBuffer.toString()
-
-      // Regex zum Extrahieren der Lautstärkeinfos
-      val meanVolumeRegex = """mean_volume:\s*(-?[\d.]+) dB""".r
-      val maxVolumeRegex = """max_volume:\s*(-?[\d.]+) dB""".r
-
-      val meanVolumeOpt = meanVolumeRegex.findFirstMatchIn(output).map(_.group(1).toDouble)
-      val maxVolumeOpt = maxVolumeRegex.findFirstMatchIn(output).map(_.group(1).toDouble)
-
-      (meanVolumeOpt, maxVolumeOpt) match {
-        case (Some(meanVol), Some(maxVol)) =>
-          Some(Map(
-            "mean_volume_db" -> meanVol,
-            "max_volume_db" -> maxVol
-          ))
-        case _ =>
-          println("Lautstaerke-Informationen konnten nicht extrahiert werden.")
-          None
-      }
-    } catch {
-      case e: Exception =>
-        println(s"Fehler beim Ausführen von ffmpeg: ${e.getMessage}")
-        None
-    }
-  }
-
-   
 
   def processVideo(
     videoPath: String,
@@ -126,6 +82,8 @@ object FFmpegUtils {
     endTimeMs: Long,
     volumeFactor: Double,
     outputDir: File,
+    framerate: Option[Double] = None,
+    bitrate: Option[Long] = None,
     width: Option[Int] = None,
     height: Option[Int] = None
   ): Option[File] = {
@@ -137,29 +95,32 @@ object FFmpegUtils {
     val startSeconds = startTimeMs / 1000.0
     val endSeconds = endTimeMs / 1000.0
 
+    // Dynamische Filter: Videoauflösung
     val resolutionFilter = (width, height) match {
       case (Some(w), Some(h)) =>
         println(s"Resolution Filter: scale=$w:$h")
-        Some(s"-vf scale=$w:$h")
+        Some(s"scale=$w:$h")
       case _ =>
         println("No resolution filter applied.")
         None
     }
 
-    val ffmpegCommand = {
-      val baseCommand = Seq(
-        ffmpegPath,
-        "-y",
-        "-ss", startSeconds.toString,
-        "-to", endSeconds.toString,
-        "-i", videoPath,
-        "-filter:a", s"volume=$volumeFactor"
-      )
-      resolutionFilter match {
-        case Some(filter) => baseCommand :+ filter
-        case None => baseCommand
-      }
-    } ++ Seq(
+    // Kombiniere ggf. mehrere Filter in -vf
+    val videoFilters = List(resolutionFilter).flatten
+    val vfArgs = if (videoFilters.nonEmpty) Seq("-vf", videoFilters.mkString(",")) else Seq()
+
+    // Framerate und Bitrate-Argumente
+    val framerateArgs = framerate.map(r => Seq("-r", r.toString)).getOrElse(Seq())
+    val bitrateArgs = bitrate.map(b => Seq("-b:v", b.toString)).getOrElse(Seq())
+
+    val ffmpegCommand = Seq(
+      ffmpegPath,
+      "-y",
+      "-ss", startSeconds.toString,
+      "-to", endSeconds.toString,
+      "-i", videoPath,
+      "-filter:a", s"volume=$volumeFactor"
+    ) ++ vfArgs ++ framerateArgs ++ bitrateArgs ++ Seq(
       "-c:v", "libx264",
       "-c:a", "aac",
       "-strict", "experimental",
@@ -167,21 +128,24 @@ object FFmpegUtils {
       outputFilePath
     )
 
-    println(s"FFmpeg Command: ${ffmpegCommand.mkString(" ")}")
-
+    //println(s"FFmpeg Command: ${ffmpegCommand.mkString(" ")}")
+    /*
     val result = ffmpegCommand.!(ProcessLogger(
-      out => println(s"FFmpeg Output: $out"),
-      err => println(s"FFmpeg Error: $err")
-    ))
-
-    println(s"FFmpeg exit code: $result")
+      line => println(s"FFmpeg Output: $line"),
+      line => println(s"FFmpeg Error: $line")
+      ))
+    */
+    
+    val result = ffmpegCommand.!(ProcessLogger(_ => (), _ => ()))
+    //println(s"FFmpeg exit code: $result")
 
     if (result == 0) {
-      println(s"Video processed successfully. Output file: $outputFilePath")
+      //println(s"Video processed successfully. Output file: $outputFilePath")
       Some(new File(outputFilePath))
     } else {
       println(s"Error processing video. Exit code: $result")
       None
     }
   }
+
 }

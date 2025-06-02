@@ -1,80 +1,82 @@
 package video
 
 import org.scalatest.funsuite.AnyFunSuite
-import java.io.File
+import java.io.{File}
+import scala.util.Random
+import scala.util.Try
 
 class FFmpegUtilsSpec extends AnyFunSuite {
 
   val testVideoPath = "test/resources/testVideo.mp4"
   val testFile = new File(testVideoPath)
   val absolutePath = testFile.getAbsolutePath
+  val outputDir = new File("test/output")
+  outputDir.mkdirs()
 
-  test("getVideoInfo should return correct metadata (sec, bitrate, fps, width, height, byte-size) for a valid video file") {
+  // --- getVideoInfo ---
+
+  test("getVideoInfo should return correct metadata for a valid video file") {
     assert(testFile.exists(), s"Testvideo nicht gefunden: $testVideoPath")
 
+    val startTime = System.nanoTime()
     val resultOpt = FFmpegUtils.getVideoInfo(absolutePath)
-    assert(resultOpt.isDefined, "getVideoInfo sollte Some(...) zurückgeben")
+    val durationMs = (System.nanoTime() - startTime) / 1_000_000.0
+    println(f"getVideoInfo for valid video: $durationMs%.2f ms")
 
+    assert(resultOpt.isDefined, "getVideoInfo sollte Some(...) zurückgeben")
     val result = resultOpt.get
 
-    assert(result("duration").isInstanceOf[Double] && result("duration").asInstanceOf[Double] > 0)
-    assert(result("fps").isInstanceOf[Double] && result("fps").asInstanceOf[Double] > 0)
-    assert(result("size").isInstanceOf[Long] && result("size").asInstanceOf[Long] > 0)
-
-    assert(result("stream_bit_rate").isInstanceOf[Int] && result("stream_bit_rate").asInstanceOf[Int] > 0)
-    assert(result("bit_rate").isInstanceOf[Long] && result("bit_rate").asInstanceOf[Long] > 0)
-
-    assert(result("height").isInstanceOf[Int] && result("height").asInstanceOf[Int] > 0)
-    assert(result("width").isInstanceOf[Int] && result("width").asInstanceOf[Int] > 0)
+    assert(result("duration").asInstanceOf[Double] > 0)
+    assert(result("fps").asInstanceOf[Double] > 0)
+    assert(result("size").asInstanceOf[Long] > 0)
+    assert(result("stream_bit_rate").asInstanceOf[Int] > 0)
+    assert(result("bit_rate").asInstanceOf[Long] > 0)
+    assert(result("height").asInstanceOf[Int] > 0)
+    assert(result("width").asInstanceOf[Int] > 0)
   }
 
   test("getVideoInfo should return None for a non-existent file") {
+    val startTime = System.nanoTime()
     val result = FFmpegUtils.getVideoInfo("non_existent_file.mp4")
+    val durationMs = (System.nanoTime() - startTime) / 1_000_000.0
+    println(f"getVideoInfo for non-existent file: $durationMs%.2f ms")
+
     assert(result.isEmpty)
   }
 
-  // ----------------------------------------------------------
+  // --- processVideo ---
 
-  test("getAudioInfo should return mean and max volume for a valid video file") {
-    assert(testFile.exists(), s"Testvideo nicht gefunden: $testVideoPath")
+  test("processVideo should process a valid video segment with volume and resolution change") {
+    assume(testFile.exists(), s"Testvideo nicht gefunden: $testVideoPath")
 
-    val audioInfoOpt = FFmpegUtils.getAudioInfo(absolutePath)
-    assert(audioInfoOpt.isDefined, "getAudioInfo sollte Some(...) zurückgeben")
+    val outputOpt = FFmpegUtils.processVideo(
+      videoPath = absolutePath,
+      startTimeMs = 0,
+      endTimeMs = 3000,
+      volumeFactor = 1.5,
+      outputDir = outputDir,
+      width = Some(320),
+      height = Some(240),
+      bitrate = Some(300_000L),
+      framerate = Some(15.0)
+    )
 
-    val audioInfo = audioInfoOpt.get
-    assert(audioInfo.contains("mean_volume_db"))
-    assert(audioInfo.contains("max_volume_db"))
+    assert(outputOpt.isDefined)
+    val outputFile = outputOpt.get
+    assert(outputFile.exists(), "Ausgabedatei wurde nicht erstellt")
+    assert(outputFile.length() > 0)
 
-    val meanVol = audioInfo("mean_volume_db").asInstanceOf[Double]
-    val maxVol = audioInfo("max_volume_db").asInstanceOf[Double]
-
-    assert(meanVol.isFinite, "mean_volume_db sollte eine gültige Zahl sein")
-    assert(maxVol.isFinite, "max_volume_db sollte eine gültige Zahl sein")
+    println(s"Output file: ${outputFile.getAbsolutePath}")
   }
 
-  test("getAudioInfo should return None for a non-existent file") {
-    val result = FFmpegUtils.getAudioInfo("non_existent_file.mp4")
+  test("processVideo should return None for non-existent input file") {
+    val result = FFmpegUtils.processVideo(
+      videoPath = "does_not_exist.mp4",
+      startTimeMs = 0,
+      endTimeMs = 1000,
+      volumeFactor = 1.0,
+      outputDir = outputDir
+    )
     assert(result.isEmpty)
   }
-
-  test("getAudioInfo should handle files with no audio stream gracefully") {
-    val noAudioFilePath = "test/resources/testVideoNoAudio.mp4"
-    val noAudioFile = new File(noAudioFilePath)
-
-    if (noAudioFile.exists()) {
-        val result = FFmpegUtils.getAudioInfo(noAudioFile.getAbsolutePath)
-        val audioInfo = result.get
-        assert(audioInfo.contains("mean_volume_db"))
-        assert(audioInfo.contains("max_volume_db"))
-        println(audioInfo("mean_volume_db").asInstanceOf[Double])
-
-        assert(audioInfo("mean_volume_db").asInstanceOf[Double] < -90)
-        assert(audioInfo("max_volume_db").asInstanceOf[Double] < -90)
-
-        assert(result.isDefined || result.isEmpty)
-        } else {
-            cancel(s"Kein Testvideo ohne Audio gefunden unter $noAudioFilePath")
-        }
-    }
-
 }
