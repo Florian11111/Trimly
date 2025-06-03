@@ -39,27 +39,30 @@ object VideoCalculator {
     if (params.endTimeMs > duration)
       return Left(s"End time exceeds video duration: ${duration.toLong} ms.")
 
-    // if no size limit is set, we can skip the size check
-    if (params.maxSizeMb > 0) {
+    val processedOpt: Option[File] =
+      if (params.maxSizeMb.exists(_ > 0)) {
         VideoCalculatorWithSizeLimit(
-            inputFile,
-            outputDir,
-            params,
-            infoOpt
+          inputFile,
+          outputDir,
+          params,
+          info
+        ) match {
+          case Right(file) => Some(file)
+          case Left(_) => None
+        }
+      } else {
+        FFmpegUtils.processVideo(
+          videoPath = inputFile.getAbsolutePath,
+          startTimeMs = params.startTimeMs,
+          endTimeMs = params.endTimeMs,
+          volumeFactor = params.volumeFactor,
+          outputDir = outputDir,
+          framerate = params.framerate,
+          bitrate = params.bitrate,
+          width = params.width,
+          height = params.height
         )
-    } else {
-        val processedOpt = FFmpegUtils.processVideo(
-        videoPath = inputFile.getAbsolutePath,
-        startTimeMs = params.startTimeMs,
-        endTimeMs = params.endTimeMs,
-        volumeFactor = params.volumeFactor,
-        outputDir = outputDir,
-        framerate = params.framerate,
-        bitrate = params.bitrate,
-        width = params.width,
-        height = params.height
-        )
-    }
+      }
 
     processedOpt match {
       case Some(file) =>
@@ -77,85 +80,108 @@ object VideoCalculator {
 
 
   def VideoCalculatorWithSizeLimit(
-      inputFile: File,
-      outputDir: File,
-      params: ProcessingParams,
-      infoOpt: Map[String, Any]
+    inputFile: File,
+    outputDir: File,
+    params: ProcessingParams,
+    infoOpt: Map[String, Any]
   ): Either[String, File] = {
-
+    // 1. Hole aktuelle Größe und Zielgröße
     val currentSizeBytes = infoOpt.get("size") match {
       case Some(s: Long) => s
       case Some(s: String) => Try(s.toLong).getOrElse(0L)
-      case _ => Left("Size not found in video info.")
+      case _ => return Left("Size not found in video info.")
     }
-    val targetSize = params.maxSizeMb match {
-      case Some(maxSizeMb) => maxSizeMb * 1024 * 1024 // convert MB to bytes
+    val targetSizeBytes = params.maxSizeMb match {
+      case Some(maxSizeMb) => (maxSizeMb * 1024 * 1024).toLong
       case None => return Left("No size limit set.")
     }
-    // test if the target size is less then 1/10 of the current size
-    if (targetSize < currentSizeBytes /10) {
-      return Left(s"Current Target size is too small: ${currentSizeBytes} bytes (less 10% of original).")
-    } 
-    
-    // video lenght ----------------------------
+    if (targetSizeBytes < currentSizeBytes / 10)
+      return Left(s"Target size too small: $targetSizeBytes bytes (<10% of original $currentSizeBytes bytes)")
 
-    // calculate the target length in ms
-    val lengthMultiplier = calculatLenghtMultiplier(inputFile, outputDir, params, infoOpt)
-    lengthMultiplier match {
-      case Left(error) => return Left(error)
-      case Right(multiplier) => currentMultiplier = multiplier
+    // 2. Berechne Ziel/Original-Multiplier
+    val overallMultiplier = targetSizeBytes.toDouble / currentSizeBytes.toDouble
+
+    // 3. Ermittle aktuelle Werte
+    val origFramerate = infoOpt.get("framerate") match {
+      case Some(f: Double) => f
+      case Some(f: String) => Try(f.toDouble).getOrElse(0.0)
+      case _ => return Left("Framerate not found in video info.")
     }
-    // add lenght multiplier to currentSizeBytes + buffer 10% 
-    val targetSizeShorten = (currentSizeBytes * currentMultiplier * 1.1).toLong
-    // fps -------------------------------
-    var targetFramerate = calculateFPSMultiplier(inputFile, outputDir, params, infoOpt)
-    targetFramerate match {
-      case Left(error) => return Left(error)
-      case Right((multiplier, framerate)) => 
-        val targetSizeWithFPS = (targetSizeShorten * multiplier * 1.1).toLong
-        val targetFramerate = framerate
-        if (framerate > 30) {
-          targetFramerate = 30
+    val origWidth = infoOpt.get("width") match {
+      case Some(w: Int) => w
+      case Some(w: String) => Try(w.toInt).getOrElse(0)
+      case _ => return Left("Width not found in video info.")
+    }
+    val origHeight = infoOpt.get("height") match {
+      case Some(h: Int) => h
+      case Some(h: String) => Try(h.toInt).getOrElse(0)
+      case _ => return Left("Height not found in video info.")
+    }
+    val origBitrate = infoOpt.get("bitrate") match {
+      case Some(b: Long) => b
+      case Some(b: String) => Try(b.toLong).getOrElse(0L)
+      case _ => return Left("Bitrate not found in video info.")
+    }
+
+    // 4. Verteile Reduktion gleichmäßig auf FPS, Auflösung, Bitrate
+    //    (geometrisches Mittel, damit keine Komponente zu stark leidet)
+    val factors = distributeReduction(overallMultiplier, origFramerate, origWidth, origHeight, origBitrate)
+
+    val targetFramerate = math.max(30.0, math.min(origFramerate, factors.fps))
+    val targetWidth = math.max(100, (origWidth * factors.res).toInt)
+    val targetHeight = math.max(100, (origHeight * factors.res).toInt)
+    val targetBitrate = math.max(100_000, (origBitrate * factors.bitrate).toLong)
+
+    // 5. Übergib an FFmpegUtils
+    val processedOpt = FFmpegUtils.processVideo(
+      videoPath = inputFile.getAbsolutePath,
+      startTimeMs = params.startTimeMs,
+      endTimeMs = params.endTimeMs,
+      volumeFactor = params.volumeFactor,
+      outputDir = outputDir,
+      framerate = Some(targetFramerate),
+      bitrate = Some(targetBitrate),
+      width = Some(targetWidth),
+      height = Some(targetHeight)
+    )
+
+    processedOpt match {
+      case Some(file) =>
+        val sizeMb = file.length() / (1024.0 * 1024.0)
+        if (sizeMb > params.maxSizeMb.getOrElse(Double.MaxValue)) {
+          file.delete()
+          Left(f"Output file is too large (${sizeMb}%.2f MB > ${params.maxSizeMb.get} MB).")
+        } else {
+          Right(file)
         }
-    }
-    var size = targetSizeWithFPS
-    var bitrate = params.bitrate match {
-      case Some(b) => b
-      case None => Left("Bitrate not set.")
-    }
-    var width = params.width match {
-      case Some(w) => w
-      case None => Left("Width not set.")
-    }
-    var height = params.height match {
-      case Some(h) => h
-      case None => Left("Height not set.")
-    }
-    // while loop while the target size is not reached. in it reduce bitrate, width and height
-    while (currentSizeBytes > targetSizeShorten) {
-      // reduce bitrate by 10%
-      params.bitrate match {
-        case Some(bitrate) if bitrate > 1000 => 
-          params.bitrate = Some((bitrate * 0.9).toLong)
-        case _ => 
-          return Left("Bitrate is too low or not set.")
-      }
-      // reduce width and height by 10%
-      params.width match {
-        case Some(width) if width > 100 => 
-          params.width = Some((width * 0.9).toInt)
-        case _ => 
-          return Left("Width is too low or not set.")
-      }
-      params.height match {
-        case Some(height) if height > 100 => 
-          params.height = Some((height * 0.9).toInt)
-        case _ => 
-          return Left("Height is too low or not set.")
-      }
+      case None => Left("FFmpeg processing failed.")
     }
   }
 
+  // Hilfsfunktion: verteilt Reduktion gleichmäßig auf FPS, Auflösung, Bitrate
+  case class ReductionFactors(fps: Double, res: Double, bitrate: Double)
+  
+  def distributeReduction(
+    overallMultiplier: Double,
+    origFramerate: Double,
+    origWidth: Int,
+    origHeight: Int,
+    origBitrate: Long
+  ): ReductionFactors = {
+    // FPS darf nicht unter 30 (außer Original ist schon weniger)
+    val minFps = math.min(30.0, origFramerate)
+    val fpsFactor = minFps / origFramerate
+
+    // Restliche Reduktion auf Auflösung und Bitrate verteilen
+    // (geometrisches Mittel für gleichmäßige Qualität)
+    val remainingMultiplier = overallMultiplier / fpsFactor
+    val resAndBitrateFactor = math.sqrt(remainingMultiplier)
+    ReductionFactors(
+      fps = fpsFactor,
+      res = resAndBitrateFactor,
+      bitrate = resAndBitrateFactor
+    )
+  }
 
   def calculateFPSMultiplier(
     inputFile: File,
@@ -197,21 +223,19 @@ object VideoCalculator {
     infoOpt: Map[String, Any]
   ): Either[String, Double] = {
     // get duration from infoOpt
-    val duration = infoOpt.get("duration") match {
+    val duration: Double = infoOpt.get("duration") match {
       case Some(d: Double) => d * 1000 // convert to ms
       case Some(d: String) => Try(d.toDouble * 1000).getOrElse(0.0) // convert to ms
-      case _ => Left("Duration not found in video info.")
+      case _ => return Left("Duration not found in video info.")
     }
     if (duration <= 0) return Left("Invalid video duration.")
 
     val targetLengthMs = params.endTimeMs - params.startTimeMs
     if (targetLengthMs <= 0) return Left("Target length must be positive.")
     // add 10% buffer to the target length
-    val ratio = targetLengthMs / duration
+    val ratio = targetLengthMs.toDouble / duration
     val bufferedRatio = if (ratio < 0.8) ratio * 1.1 else ratio
     Right(Math.min(bufferedRatio, 1.0))
-
-
   }
 
 }
