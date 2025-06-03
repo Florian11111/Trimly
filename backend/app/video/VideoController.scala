@@ -18,8 +18,11 @@ class VideoController @Inject()(
   def upload: Action[MultipartFormData[TemporaryFile]] = Action.async(parse.multipartFormData) { request =>
     request.body.file("video").map { video =>
       videoService.handleUpload(request.body, video).map {
-        case Right(result) => Ok(Json.toJson(result))
-        case Left(error) => BadRequest(Json.obj("status" -> "error", "message" -> error))
+        case Right(result) =>
+          println(s"Processed video: ${result.processedVideo}")
+          Ok(Json.toJson(result))
+        case Left(error) =>
+          BadRequest(Json.obj("status" -> "error", "message" -> error))
       }
     }.getOrElse(Future.successful(BadRequest("Missing file")))
   }
