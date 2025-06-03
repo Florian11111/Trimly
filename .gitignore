@@ -44,6 +44,7 @@ docker-compose.override.yml
 # === Uploads / Videos (optional if large files handled separately) ===
 /videos/
 *.mp4
+!testVideo.mp4
 *.webm
 *.mov
 
