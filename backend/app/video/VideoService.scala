@@ -7,9 +7,12 @@ import java.io.File
 import java.nio.file.{Paths, Path}
 import scala.util.{Random, Success, Failure, Try}
 import javax.inject._
-import video.FFmpegUtils
 import scala.concurrent.duration._
 import org.apache.pekko.actor.ActorSystem
+
+import video.FFmpegUtils
+import video.VideoInfo
+import video.VideoConversion
 
 @Singleton
 class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionContext) {
@@ -39,9 +42,9 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     }
   }
 
-  def handleUpload(data: MultipartFormData[TemporaryFile], video: MultipartFormData.FilePart[TemporaryFile]): Future[Either[String, String]] = Future {
-    val startTime = data.dataParts.get("startTime").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption).getOrElse(0L)
-    val endTime   = data.dataParts.get("endTime").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption).getOrElse(0L)
+  def handleUpload(data: MultipartFormData[TemporaryFile], video: MultipartFormData.FilePart[TemporaryFile]): Future[Either[String, String]] = {
+    val startTime = data.dataParts.get("startTime").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
+    val endTime   = data.dataParts.get("endTime").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
     val volume    = data.dataParts.get("volume").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(1.0)
     val maxSizeMb = data.dataParts.get("maxSizeMb").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(-1.0)
     val width     = data.dataParts.get("width").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
@@ -56,14 +59,14 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     
     video.ref.moveTo(outputFile, replace = true)
     if (!outputFile.exists()) {
-      return Left(s"Failed to move uploaded file to processed directory: ${outputFile.getAbsolutePath}")
+      return Future.successful(Left(s"Failed to move uploaded file to processed directory: ${outputFile.getAbsolutePath}"))
     }
     println("successfully moved file to processed directory: " + outputFile.getAbsolutePath)
-    val conversionInfo = VideoCalculator.VideoConversion(
+    val conversionInfo = VideoConversion(
       filePath = outputFile.getAbsolutePath,
       filePathReady = processedDir.getAbsolutePath + File.separator + filenameReady,
-      startTime = startTime.toInt,
-      endTime = endTime.toInt,
+      startTime = startTime,
+      endTime = endTime,
       bitrate = data.dataParts.get("bitrate").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption),
       framerate = framerate,
       width = width,
@@ -72,15 +75,14 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     )
 
     println(s"Processing video: $filename with conversion info: $conversionInfo")
-    // call the Future process in the VideoCalculator
-    VideoCalculator.process(conversionInfo).flatMap {
-      case Right(processedFile) =>
-        scheduleDeleteAfterDelay(processedFile)
-        println(s"Video processed successfully: ${processedFile.getAbsolutePath}")
+    VideoCalculator.process(conversionInfo).map {
+      case Right(_) =>
+        scheduleDeleteAfterDelay(conversionInfo.filePath, conversionInfo.filePathReady)
+        Right(filename)
       case Left(error) =>
         println(s"Error processing video: $error")
+        Left(error)
     }
-    Right(filename)
   }
 
   def checkVideoExists(filename: String): Boolean = {

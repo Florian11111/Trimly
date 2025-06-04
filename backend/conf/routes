@@ -1,4 +1,3 @@
-
 POST    /upload                  video.VideoController.upload
-GET     /check/:filename         video.VideoController.check(filename: String)
+GET     /check/:filename         video.VideoController.checkVideo(filename: String)
 GET     /download/:filename      video.VideoController.download(filename: String)

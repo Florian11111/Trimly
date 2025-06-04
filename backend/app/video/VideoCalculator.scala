@@ -2,80 +2,54 @@ package video
 
 import java.io.File
 import scala.util.{Try, Random}
+import scala.concurrent.Future
+import video.VideoConversion
+import video.FFmpegUtils
+import video.FFmpegUtils.getVideoInfo
+import video.VideoInfo
 
 object VideoCalculator {
 
-  
-  case class VideoConversion(
-    filePath: String,
-    filePathReady: String,
-    startTime: Int,
-    endTime: Int,
-    bitrate: Option[Long],
-    framerate: Option[Double],
-    width: Option[Int],
-    height: Option[Int],
-    volume: Option[Double],
-  )
   def process(
-    VideoCalculator: VideoConversion
-  ): Future[Either[String, File]] = {
-
-    if (!inputFile.exists())
-      return Left(s"Input file does not exist: ${inputFile.getAbsolutePath}")
-
-    val infoOpt = FFmpegUtils.getVideoInfo(inputFile.getAbsolutePath)
-    if (infoOpt.isEmpty)
-      return Left("Could not extract video metadata.")
-
-    val info = infoOpt.get
-    val duration = Try(info("duration").asInstanceOf[Double]).getOrElse(0.0) * 1000  // in ms
-
-    if (params.startTimeMs < 0)
-      return Left("Start time must be non-negative.")
-    if (params.endTimeMs <= params.startTimeMs)
-      return Left("End time must be after start time.")
-    if (params.endTimeMs > duration)
-      return Left(s"End time exceeds video duration: ${duration.toLong} ms.")
-
-    // if no size limit is set, we can skip the size check
-    if (params.maxSizeMb > 0) {
-        VideoCalculatorWithSizeLimit(
-            inputFile,
-            outputDir,
-            params,
-            infoOpt
-        )
-    } else {
-        val processedOpt = FFmpegUtils.processVideo(
-        videoPath = inputFile.getAbsolutePath,
-        startTimeMs = params.startTimeMs,
-        endTimeMs = params.endTimeMs,
-        volumeFactor = params.volumeFactor,
-        outputDir = outputDir,
-        framerate = params.framerate,
-        bitrate = params.bitrate,
-        width = params.width,
-        height = params.height
-        )
+    videoConversion: VideoConversion
+  ): Future[Either[String, String]] = {
+    
+    
+    val maybeInfo = FFmpegUtils.getVideoInfo(videoConversion.filePath)
+    if (maybeInfo.isLeft) {
+      return Future.successful(Left(maybeInfo.left.get))
     }
+    val info = maybeInfo.toOption.get
 
+    println(s"Video info: $info")
+
+    if (videoConversion.startTime.getOrElse(0) < 0)
+      return Future.successful(Left("Start time must be non-negative."))
+    if (videoConversion.endTime.getOrElse(0) <= videoConversion.startTime.getOrElse(0))
+      return Future.successful(Left("End time must be after start time."))
+    if (videoConversion.endTime.getOrElse(0) > (info.duration * 1000).toInt)
+      return Future.successful(Left(s"End time exceeds video duration: ${info.duration} ms."))
+
+    val adjustedConversion = videoConversion.copy(
+      startTime = Some(videoConversion.startTime.getOrElse(0)),
+      endTime = Some(videoConversion.endTime.getOrElse(info.duration.toInt * 1000)),
+      bitrate = videoConversion.bitrate.orElse(Some(info.streamBitRate.toLong)),
+      framerate = videoConversion.framerate.orElse(Some(info.fps)),
+      width = videoConversion.width.orElse(Some(info.width)),
+      height = videoConversion.height.orElse(Some(info.height)),
+      volume = videoConversion.volume.orElse(Some(1.0))
+    )
+
+    val processedOpt = FFmpegUtils.processVideo(adjustedConversion)
     processedOpt match {
-      case Some(file) =>
-        val sizeMb = file.length() / (1024.0 * 1024.0)
-        params.maxSizeMb match {
-          case Some(maxMb) if sizeMb > maxMb =>
-            file.delete()
-            Left(f"Output file is too large (${sizeMb}%.2f MB > ${maxMb} MB).")
-          case _ =>
-            Right(file)
-        }
-      case None => Left("FFmpeg processing failed.")
+      case Left(error) => Future.successful(Left(error))
+      case Right(msg) =>
+        Future.successful(Right(s"Processed successfully}"))
     }
   }
 
-
-  def VideoCalculatorWithSizeLimit(
+/*
+  def videoConversionWithSizeLimit(
       inputFile: File,
       outputDir: File,
       params: ProcessingParams,
@@ -212,5 +186,5 @@ object VideoCalculator {
 
 
   }
-
+*/
 }

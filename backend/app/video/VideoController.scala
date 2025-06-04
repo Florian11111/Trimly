@@ -25,11 +25,11 @@ class VideoController @Inject()(
   }
 
   // call videoService checkVideoExists (true or false)
-  def checkVideo(filename: String): Action[AnyContent] = Action.async {
-    videoService.checkVideoExists(filename).map { exists =>
-      if (exists) Ok(Json.obj("exists" -> true))
-      else NotFound(Json.obj("exists" -> false, "message" -> "Video not found."))
-    }
+  def checkVideo(filename: String): Action[AnyContent] = Action {
+    if (videoService.checkVideoExists(filename))
+      Ok(Json.obj("exists" -> true))
+    else
+      NotFound(Json.obj("exists" -> false, "message" -> "Video not found."))
   }
 
   def download(filename: String): Action[AnyContent] = Action {

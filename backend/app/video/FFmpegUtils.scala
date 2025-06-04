@@ -6,26 +6,14 @@ import scala.util.Random
 import java.nio.file.Paths
 import upickle.default._
 import scala.util.matching.Regex
-
+import video.VideoInfo
+import video.VideoConversion
 
 object FFmpegUtils {
-
-
-  case class VideoInfo(
-    fileName: String,
-    duration: Double, // in seconds
-    bitRate: Long, // in bits per second
-    size: Long, // in bytes
-    width: Int,
-    height: Int,
-    fps: Double, // frames per second
-    streamBitRate: Int // stream bit rate in bits per second
-  )
-
   private val ffmpegPath = "ffmpeg"
   private val ffprobePath = "ffprobe"
 
-  def getVideoInfo(filepath: String): Either(String, VideoInfo) = {
+  def getVideoInfo(filepath: String): Either[String, VideoInfo] = {
 
     val ffprobeCmd = Seq(
       "ffprobe", 
@@ -73,7 +61,6 @@ object FFmpegUtils {
 
       // convert to VideoInfo 
       Right(VideoInfo(
-        fileName = Paths.get(filepath).getFileName.toString,
         duration = durationDouble,
         bitRate = bitRateLong,
         size = sizeLong,
@@ -92,32 +79,22 @@ object FFmpegUtils {
 
 
   def processVideo(
-    videoPath: String,
-    startTimeMs: Long,
-    endTimeMs: Long,
-    volumeFactor: Double,
-    outputDir: File,
-    framerate: Option[Double] = None,
-    bitrate: Option[Long] = None,
-    width: Option[Int] = None,
-    height: Option[Int] = None
-  ): Option[File] = {
+    videoConversion: VideoConversion,
+  ): Either[String, String] = {
 
-    val randomSuffix = Random.alphanumeric.take(8).mkString
-    val filenameWithRandomSuffix = Paths.get(videoPath).getFileName.toString.replace(".mp4", s"_$randomSuffix.mp4")
-    val outputFilePath = outputDir.toPath.resolve(filenameWithRandomSuffix).toString
+    val videoPath = videoConversion.filePath
+    val outputFilePath = videoConversion.filePathReady
 
-    val startSeconds = startTimeMs / 1000.0
-    val endSeconds = endTimeMs / 1000.0
+    val startSeconds = videoConversion.startTime.getOrElse(0) / 1000.0
+    val endSeconds = videoConversion.endTime.getOrElse(0) / 1000.0
 
     // Dynamische Filter: Videoauflösung
-    val resolutionFilter = (width, height) match {
+    val resolutionFilter = (videoConversion.width, videoConversion.height) match {
       case (Some(w), Some(h)) =>
         println(s"Resolution Filter: scale=$w:$h")
         Some(s"scale=$w:$h")
       case _ =>
-        println("No resolution filter applied.")
-        None
+        return Left("Width and height must be specified for resolution filter.")
     }
 
     // Kombiniere ggf. mehrere Filter in -vf
@@ -125,8 +102,19 @@ object FFmpegUtils {
     val vfArgs = if (videoFilters.nonEmpty) Seq("-vf", videoFilters.mkString(",")) else Seq()
 
     // Framerate und Bitrate-Argumente
-    val framerateArgs = framerate.map(r => Seq("-r", r.toString)).getOrElse(Seq())
-    val bitrateArgs = bitrate.map(b => Seq("-b:v", b.toString)).getOrElse(Seq())
+    val framerateArgs = videoConversion.framerate match {
+      case Some(fps) => Seq("-r", fps.toString)
+      case None => return Left("Framerate must be specified.")
+    }
+    val bitrateArgs = videoConversion.bitrate match {
+      case Some(b) => Seq("-b:v", s"${b}k")
+      case None => return Left("Bitrate must be specified.")
+    }
+
+    val volumeFactor = videoConversion.volume match {
+      case Some(v) if v >= 0 => v.toString
+      case _ => return Left("Volume must be a non-negative number.")
+    }
 
     val ffmpegCommand = Seq(
       ffmpegPath,
@@ -143,23 +131,14 @@ object FFmpegUtils {
       outputFilePath
     )
 
-    //println(s"FFmpeg Command: ${ffmpegCommand.mkString(" ")}")
-    /*
-    val result = ffmpegCommand.!(ProcessLogger(
-      line => println(s"FFmpeg Output: $line"),
-      line => println(s"FFmpeg Error: $line")
-      ))
-    */
-    
     val result = ffmpegCommand.!(ProcessLogger(_ => (), _ => ()))
-    //println(s"FFmpeg exit code: $result")
+    
 
     if (result == 0) {
       //println(s"Video processed successfully. Output file: $outputFilePath")
-      Some(new File(outputFilePath))
+      Right("Video processed successfully.")
     } else {
-      println(s"Error processing video. Exit code: $result")
-      None
+      Left(s"FFmpeg processing failed with exit code $result.")
     }
   }
 
