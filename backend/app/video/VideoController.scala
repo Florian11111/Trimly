@@ -18,11 +18,20 @@ class VideoController @Inject()(
   def upload: Action[MultipartFormData[TemporaryFile]] = Action.async(parse.multipartFormData) { request =>
     request.body.file("video").map { video =>
       videoService.handleUpload(request.body, video).map {
-        case Right(result) => Ok(Json.toJson(result))
-        case Left(error) => BadRequest(Json.obj("status" -> "error", "message" -> error))
+        case Right(filename) =>
+          println(s"[DEBUG] Sending success response for uploaded file: $filename")
+          Ok(Json.obj("status" -> "success", "filename" -> filename))
+
+        case Left(error) =>
+          println(s"[DEBUG] Sending error response: $error")
+          BadRequest(Json.obj("status" -> "error", "message" -> error))
       }
-    }.getOrElse(Future.successful(BadRequest("Missing file")))
+    }.getOrElse {
+      println(s"[DEBUG] No video file found in upload request.")
+      Future.successful(BadRequest("Missing file"))
+    }
   }
+
 
   // call videoService checkVideoExists (true or false)
   def checkVideo(filename: String): Action[AnyContent] = Action {

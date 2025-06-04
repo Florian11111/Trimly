@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from "react";
 import "./App.css";
 
@@ -26,6 +25,29 @@ function App() {
     "1080p": { width: 1920, height: 1080 },
     "480p": { width: 854, height: 480 },
   };
+
+  // --- Funktionsdefinitionen für useEffect müssen vor useEffect stehen ---
+  const togglePlayPause = () => {
+    const video = videoRef.current;
+    if (video.paused) {
+      video.play();
+    } else {
+      video.pause();
+    }
+  };
+
+  const skipTime = React.useCallback((time) => {
+    const video = videoRef.current;
+    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + time));
+  }, [duration]);
+
+  const changeVolume = React.useCallback((amount) => {
+    const newVolume = Math.min(1, Math.max(0, playerVolume + amount));
+    setPlayerVolume(newVolume);
+    if (videoRef.current) {
+      videoRef.current.volume = newVolume;
+    }
+  }, [playerVolume]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -67,29 +89,7 @@ function App() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [currentTime, volume]);
-
-  const togglePlayPause = () => {
-    const video = videoRef.current;
-    if (video.paused) {
-      video.play();
-    } else {
-      video.pause();
-    }
-  };
-
-  const skipTime = (time) => {
-    const video = videoRef.current;
-    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + time));
-  };
-
-  const changeVolume = (amount) => {
-    const newVolume = Math.min(1, Math.max(0, playerVolume + amount));
-    setPlayerVolume(newVolume);
-    if (videoRef.current) {
-      videoRef.current.volume = newVolume;
-    }
-  };
+  }, [currentTime, volume, changeVolume, skipTime]);
 
   const handleDrop = (e) => {
     e.preventDefault();
@@ -155,23 +155,46 @@ function App() {
     }
 
     try {
+
+      console.log(`test :):`);
       const response = await fetch("http://localhost:9000/upload", {
         method: "POST",
         body: formData,
       });
-
+      console.log(`Response status: ${response.status}`);
+      console.log(`Response headers:`, response.headers);
       const result = await response.json();
       
+      console.log(`Upload result:`, result);
       if (result.status === "success") {
-        // print filename
-        console.log("Dateiname:", result.filename);
-        const downloadUrl = "http://localhost:9000/download/" + encodeURIComponent(result.filename);
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = result.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
+        // Poll /check/:filename until available
+        const filename = result.filename;
+        const checkUrl = `http://localhost:9000/check/${encodeURIComponent(filename)}`;
+        let available = false;
+        let attempts = 0;
+        while (!available && attempts < 200) { // max 200s
+          console.log(`Checking availability for ${filename}... attempt ${attempts + 1}`);
+          const checkResp = await fetch(checkUrl);
+          const checkData = await checkResp.json();
+          console.log(`Check response:`, checkData);
+          if (checkData.exists === true) {
+            available = true;
+            break;
+          }
+          await new Promise((res) => setTimeout(res, 1000));
+          attempts++;
+        }
+        if (available) {
+          const downloadUrl = `http://localhost:9000/download/${encodeURIComponent(filename)}`;
+          const a = document.createElement("a");
+          a.href = downloadUrl;
+          a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        } else {
+          alert("Download nicht verfügbar. Bitte später erneut versuchen.");
+        }
       } else {
         alert(result.message);
       }
