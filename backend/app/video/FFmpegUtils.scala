@@ -10,10 +10,23 @@ import scala.util.matching.Regex
 
 object FFmpegUtils {
 
+
+  case class VideoInfo(
+    fileName: String,
+    duration: Double, // in seconds
+    bitRate: Long, // in bits per second
+    size: Long, // in bytes
+    width: Int,
+    height: Int,
+    fps: Double, // frames per second
+    streamBitRate: Int // stream bit rate in bits per second
+  )
+
   private val ffmpegPath = "ffmpeg"
   private val ffprobePath = "ffprobe"
 
-  def getVideoInfo(filepath: String): Option[Map[String, Any]] = {
+  def getVideoInfo(filepath: String): Either(String, VideoInfo) = {
+
     val ffprobeCmd = Seq(
       "ffprobe", 
       "-v", "error",
@@ -58,20 +71,22 @@ object FFmpegUtils {
       val bitRateLong: Long = bit_rate.flatMap(b => scala.util.Try(b.toLong).toOption).getOrElse(0L)
       val streamBitRateInt: Int = stream_bit_rate.flatMap(b => scala.util.Try(b.toInt).toOption).getOrElse(0)
 
-      Some(Map(
-        "duration" -> durationDouble,
-        "bit_rate" -> bitRateLong,
-        "size" -> sizeLong,
-        "width" -> width.getOrElse(0),
-        "height" -> height.getOrElse(0),
-        "fps" -> fps,
-        "stream_bit_rate" -> streamBitRateInt
+      // convert to VideoInfo 
+      Right(VideoInfo(
+        fileName = Paths.get(filepath).getFileName.toString,
+        duration = durationDouble,
+        bitRate = bitRateLong,
+        size = sizeLong,
+        width = width.getOrElse(0),
+        height = height.getOrElse(0),
+        fps = fps,
+        streamBitRate = streamBitRateInt
       ))
 
     } catch {
       case e: Exception =>
         println(s"Error getting info: ${e.getMessage}")
-        None
+        Left(s"Error getting video info: ${e.getMessage}")
     }
   }
 

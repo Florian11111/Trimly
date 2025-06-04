@@ -19,83 +19,77 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
 
   if (!processedDir.exists()) processedDir.mkdir()
 
-  def scheduleDeleteAfterDelay(file: File): Unit = {
+
+  def scheduleDeleteAfterDelay(filepath: String, filePathReady: String): Unit = {
+    // delete filepath now
+    val file = new File(filepath)
+    if (file.exists()) {
+      file.delete()
+      println(s"Deleted file ${file.getName}.")
+    }
+    // delete filePathReady after 1 minute
     actorSystem.scheduler.scheduleOnce(1.minutes) {
-      val deleted = file.delete()
-      if (deleted) {
-        println(s"Deleted file ${file.getName}.")
+      val readyFile = new File(filePathReady)
+      if (readyFile.exists()) {
+        readyFile.delete()
+        println(s"Deleted ready file ${readyFile.getName}.")
       } else {
-        println(s"Failed to delete file ${file.getName}.")
+        println(s"Ready file ${readyFile.getName} does not exist, nothing to delete.")
       }
     }
   }
 
-  def handleUpload(
-    data: MultipartFormData[TemporaryFile],
-    video: MultipartFormData.FilePart[TemporaryFile]
-  ): Future[Either[String, UploadResult]] = Future {
-    val filename = Paths.get(video.filename).getFileName.toString
-    val tempDir = new File(uploadDir, s"upload_${Random.alphanumeric.take(8).mkString}")
-    if (!tempDir.exists()) tempDir.mkdir()
-
-    val tempPath = tempDir.toPath.resolve(filename)
-    video.ref.copyTo(tempPath.toFile, replace = true)
-
+  def handleUpload(data: MultipartFormData[TemporaryFile], video: MultipartFormData.FilePart[TemporaryFile]): Future[Either[String, String]] = Future {
     val startTime = data.dataParts.get("startTime").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption).getOrElse(0L)
     val endTime   = data.dataParts.get("endTime").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption).getOrElse(0L)
     val volume    = data.dataParts.get("volume").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(1.0)
-    val maxSizeMb = data.dataParts.get("maxSizeMb").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption)
-    val bitrate   = data.dataParts.get("bitrate").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption)
+    val maxSizeMb = data.dataParts.get("maxSizeMb").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(-1.0)
+    val width     = data.dataParts.get("width").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
+    val height    = data.dataParts.get("height").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
     val framerate = data.dataParts.get("framerate").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption)
-
-    val (widthOpt, heightOpt) = data.dataParts.get("resolution")
-      .flatMap(_.headOption)
-      .flatMap(s => s.split("x").map(_.toIntOption).toList match {
-        case List(Some(w), Some(h)) => Some((Some(w), Some(h)))
-        case _ => None
-      }).getOrElse((None, None))
-
-    val params = VideoCalculator.ProcessingParams(
-      startTimeMs = startTime,
-      endTimeMs = endTime,
-      volumeFactor = volume,
+    
+    // add 10 random characters to the filename
+    val randomSuffix = Random.alphanumeric.take(10).mkString
+    val filename = s"${video.filename.stripSuffix(".mp4")}_$randomSuffix.mp4"
+    val filenameReady = s"${filename.stripSuffix(".mp4")}_r.mp4"
+    val outputFile = new File(processedDir, filename)
+    
+    video.ref.moveTo(outputFile, replace = true)
+    if (!outputFile.exists()) {
+      return Left(s"Failed to move uploaded file to processed directory: ${outputFile.getAbsolutePath}")
+    }
+    println("successfully moved file to processed directory: " + outputFile.getAbsolutePath)
+    val conversionInfo = VideoCalculator.VideoConversion(
+      filePath = outputFile.getAbsolutePath,
+      filePathReady = processedDir.getAbsolutePath + File.separator + filenameReady,
+      startTime = startTime.toInt,
+      endTime = endTime.toInt,
+      bitrate = data.dataParts.get("bitrate").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption),
       framerate = framerate,
-      bitrate = bitrate,
-      width = widthOpt,
-      height = heightOpt,
-      maxSizeMb = maxSizeMb
+      width = width,
+      height = height,
+      volume = Some(volume)
     )
 
-    val outputDir = processedDir
-    println(s"Processing video: $filename with params: $params")
-    VideoCalculator.process(
-      inputFile = tempPath.toFile,
-      outputDir = outputDir,
-      params = params
-    ) match {
+    println(s"Processing video: $filename with conversion info: $conversionInfo")
+    // call the Future process in the VideoCalculator
+    VideoCalculator.process(conversionInfo).flatMap {
       case Right(processedFile) =>
         scheduleDeleteAfterDelay(processedFile)
-        println(s"Video processed successfully: ${processedFile.getName}")
-        Right(
-          UploadResult(
-            status = "ok",
-            filename = processedFile.getName,
-            startTime = startTime,
-            endTime = endTime,
-            volume = volume,
-            message = "Video processed successfully.",
-            processedVideo = processedFile.getName
-          )
-        )
+        println(s"Video processed successfully: ${processedFile.getAbsolutePath}")
       case Left(error) =>
-        Left(error)
+        println(s"Error processing video: $error")
     }
+    Right(filename)
   }
 
-   def getProcessedVideoFile(filename: String): Option[File] = {
-      println(s"Looking for processed video file: $filename")
-      val file = new File(processedDir, filename)
-      if (file.exists()) Some(file) else None
-    }
+  def checkVideoExists(filename: String): Boolean = {
+    val file = new File(processedDir, filename)
+    file.exists()
+  }
 
+  def getProcessedVideoFile(filename: String): Option[File] = {
+    val file = new File(processedDir, filename)
+    if (file.exists()) Some(file) else None
+  }
 }
