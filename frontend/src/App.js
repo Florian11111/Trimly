@@ -161,8 +161,11 @@ function App() {
       });
 
       const result = await response.json();
+      
       if (result.status === "success") {
-        const downloadUrl = "http://localhost:9000" + result.processedVideo;
+        // print filename
+        console.log("Dateiname:", result.filename);
+        const downloadUrl = "http://localhost:9000/download/" + encodeURIComponent(result.filename);
         const a = document.createElement("a");
         a.href = downloadUrl;
         a.download = result.filename;
