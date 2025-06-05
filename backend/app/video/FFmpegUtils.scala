@@ -58,7 +58,7 @@ object FFmpegUtils {
       val sizeLong: Long = size.flatMap(s => scala.util.Try(s.toLong).toOption).getOrElse(0L)
       val bitRateLong: Long = bit_rate.flatMap(b => scala.util.Try(b.toLong).toOption).getOrElse(0L)
       val streamBitRateInt: Int = stream_bit_rate.flatMap(b => scala.util.Try(b.toInt).toOption).getOrElse(0)
-
+  
       // convert to VideoInfo 
       Right(VideoInfo(
         duration = durationDouble,
@@ -91,7 +91,6 @@ object FFmpegUtils {
     // Dynamische Filter: Videoauflösung
     val resolutionFilter = (videoConversion.width, videoConversion.height) match {
       case (Some(w), Some(h)) =>
-        println(s"Resolution Filter: scale=$w:$h")
         Some(s"scale=$w:$h")
       case _ =>
         return Left("Width and height must be specified for resolution filter.")
@@ -130,7 +129,7 @@ object FFmpegUtils {
       "-f", "mp4",
       outputFilePath
     )
-
+    println(s"ffmpeg befehl: $ffmpegCommand")
     val result = ffmpegCommand.!(ProcessLogger(_ => (), _ => ()))
     
 

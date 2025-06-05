@@ -2,51 +2,70 @@ package video
 
 import java.io.File
 import scala.util.{Try, Random}
-import scala.concurrent.Future
 import video.VideoConversion
 import video.FFmpegUtils
 import video.FFmpegUtils.getVideoInfo
 import video.VideoInfo
+import scala.concurrent.{Future, ExecutionContext}
+
 
 object VideoCalculator {
 
   def process(
     videoConversion: VideoConversion
-  ): Future[Either[String, String]] = {
-    
-    
+  )(implicit ec: ExecutionContext): Future[Either[String, String]] = Future {
     val maybeInfo = FFmpegUtils.getVideoInfo(videoConversion.filePath)
     if (maybeInfo.isLeft) {
-      return Future.successful(Left(maybeInfo.left.get))
-    }
-    val info = maybeInfo.toOption.get
+      Left(maybeInfo.swap.getOrElse("Unknown error"))
+    } else {
+      val info = maybeInfo.toOption.get
 
-    println(s"Video info: $info")
+      val width = videoConversion.width.orElse(Some(info.width)).getOrElse(0)
+      val height = videoConversion.height.orElse(Some(info.height)).getOrElse(0)
+      val fps = videoConversion.framerate.orElse(Some(info.fps)).getOrElse(30.0)
 
-    if (videoConversion.startTime.getOrElse(0) < 0)
-      return Future.successful(Left("Start time must be non-negative."))
-    if (videoConversion.endTime.getOrElse(0) <= videoConversion.startTime.getOrElse(0))
-      return Future.successful(Left("End time must be after start time."))
-    if (videoConversion.endTime.getOrElse(0) > (info.duration * 1000).toInt)
-      return Future.successful(Left(s"End time exceeds video duration: ${info.duration} ms."))
+      val normalBitrate: Long = {
+        val base = (width, height) match {
+          case (w, h) if w >= 3840 || h >= 2160 => 35000 // 4K
+          case (w, h) if w >= 2560 || h >= 1440 => 16000 // 1440p
+          case (w, h) if w >= 1920 || h >= 1080 => 8000  // 1080p
+          case (w, h) if w >= 1280 || h >= 720  => 5000  // 720p
+          case _ => 2500
+        }
+        if (fps > 30) (base * 1.3).toLong else base
+      }
 
-    val adjustedConversion = videoConversion.copy(
-      startTime = Some(videoConversion.startTime.getOrElse(0)),
-      endTime = Some(videoConversion.endTime.getOrElse(info.duration.toInt * 1000)),
-      bitrate = videoConversion.bitrate.orElse(Some(info.streamBitRate.toLong)),
-      framerate = videoConversion.framerate.orElse(Some(info.fps)),
-      width = videoConversion.width.orElse(Some(info.width)),
-      height = videoConversion.height.orElse(Some(info.height)),
-      volume = videoConversion.volume.orElse(Some(1.0))
-    )
+      val usedBitrate = videoConversion.bitrate
+        .orElse(Some(info.streamBitRate.toLong))
+        .filter(_ > 0)
+        .map(b => Math.min(b, normalBitrate))
+        .getOrElse(normalBitrate)      
 
-    val processedOpt = FFmpegUtils.processVideo(adjustedConversion)
-    processedOpt match {
-      case Left(error) => Future.successful(Left(error))
-      case Right(msg) =>
-        Future.successful(Right(s"Processed successfully}"))
+      if (videoConversion.startTime.getOrElse(0) < 0)
+        Left("Start time must be non-negative.")
+      else if (videoConversion.endTime.getOrElse(0) <= videoConversion.startTime.getOrElse(0))
+        Left("End time must be after start time.")
+      else if (videoConversion.endTime.getOrElse(0) > (info.duration * 1000).toInt)
+        Left(s"End time exceeds video duration: ${info.duration} ms.")
+      else {
+        val adjustedConversion = videoConversion.copy(
+          startTime = Some(videoConversion.startTime.getOrElse(0)),
+          endTime = Some(videoConversion.endTime.getOrElse(info.duration.toInt * 1000)),
+          bitrate = Some(usedBitrate),
+          framerate = Some(fps),
+          width = Some(width),
+          height = Some(height),
+          volume = videoConversion.volume.orElse(Some(1.0))
+        )
+
+        FFmpegUtils.processVideo(adjustedConversion) match {
+          case Left(error) => Left(error)
+          case Right(msg)  => Right("Processed successfully")
+        }
+      }
     }
   }
+}
 
 /*
   def videoConversionWithSizeLimit(
@@ -187,4 +206,3 @@ object VideoCalculator {
 
   }
 */
-}

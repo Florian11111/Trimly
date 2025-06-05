@@ -27,7 +27,7 @@ class VideoServiceSpec extends AnyFunSuite with ScalaFutures with Matchers {
   test("scheduleDeleteAfterDelay deletes file immediately and after delay") {
     val tmp = File.createTempFile("test", ".mp4")
     val ready = File.createTempFile("test_ready", ".mp4")
-    service.scheduleDeleteAfterDelay(tmp.getAbsolutePath, ready.getAbsolutePath)
+    service.scheduleDeleteAfterDelay(tmp.getAbsolutePath, ready.getAbsolutePath, "test_ready.mp4")
     Thread.sleep(100) // give time for immediate delete
     assert(!tmp.exists())
     // ready file will be deleted after 1 minute, but we don't wait here
