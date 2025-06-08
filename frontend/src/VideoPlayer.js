@@ -125,7 +125,6 @@ export default function VideoPlayer({ videoURL, videoRef, progressBarRef }) {
         </div>
       </div>
 
-      {/* External Timeline */}
       <div
         className="timeline-bar"
         ref={(el) => {
@@ -134,6 +133,17 @@ export default function VideoPlayer({ videoURL, videoRef, progressBarRef }) {
         }}
         onClick={handleTimelineClick}
       >
+        {/* Hintergrund für Klick & Zeitindikator */}
+        <div className="timeline-background" />
+
+        {/* Weißer Strich als Zeitindikator */}
+        <div
+          className="timeline-indicator"
+          style={{
+            left: `${(currentTime / duration) * 100}%`,
+          }}
+        />
+
         <div
           className="timeline-range"
           style={{
@@ -156,6 +166,7 @@ export default function VideoPlayer({ videoURL, videoRef, progressBarRef }) {
         <span>{formatTime(currentTime)}</span>
         <span>{formatTime(duration)}</span>
       </div>
+
 
 
       {/* Audio Multiplier */}

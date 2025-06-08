@@ -120,3 +120,24 @@
   color: #6b7280; /* Tailwind's gray-600 */
   margin-top: 0.25rem;
 }
+
+.timeline-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #101114; /* etwas dunkler als .timeline-bar */
+  border-radius: 6px;
+  z-index: 0;
+}
+
+.timeline-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background-color: white;
+  z-index: 2;
+  pointer-events: none; 
+}
