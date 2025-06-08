@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./App.css";
+import VideoPlayer from "./VideoPlayer";
+
 
 function App() {
   const [videoFile, setVideoFile] = useState(null);
@@ -237,138 +239,36 @@ function App() {
         onDragOver={handleDragOver}
       >
         {videoURL ? (
-          <div className="player">
-            <video
-              ref={videoRef}
-              src={videoURL}
-              onLoadedMetadata={handleLoadedMetadata}
-              onTimeUpdate={handleTimeUpdate}
-              onClick={togglePlayPause}
-              style={{ width: "100%", maxHeight: "360px", cursor: "pointer" }}
-              volume={playerVolume}
-            />
-            <div
-              className="timeline"
-              ref={progressBarRef}
-              onClick={handleTimelineClick}
-            >
-              <div
-                className="progress"
-                style={{ width: `${(currentTime / duration) * 100}%` }}
-              />
-              <div
-                className="range start"
-                style={{ left: `${(startTime / duration) * 100}%` }}
-              />
-              <div
-                className="range end"
-                style={{ left: `${(endTime / duration) * 100}%` }}
-              />
-            </div>
-
-            <div className="time-info">
-              <span>Start: {startTime.toFixed(1)}s</span>
-              <span>Ende: {endTime.toFixed(1)}s</span>
-              <span>Aktuell: {currentTime.toFixed(1)}s</span>
-            </div>
-
-            <div className="player-controls">
-              <div className="sound-multiplier">
-                <label>Sound Multiplier:</label>
-                <input
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.1"
-                  value={volume}
-                  onChange={handleSoundMultiplierChange}
-                />
-                <span>{volume.toFixed(1)}x</span>
-              </div>
-
-              <div className="player-volume">
-                <label>Volume:</label>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={playerVolume}
-                  onChange={handleVolumeChange}
-                />
-                <span>{(playerVolume * 100).toFixed(0)}%</span>
-              </div>
-            </div>
-
-            <div className="limit-size-option" style={{ marginTop: "1rem" }}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={limitSize}
-                  onChange={(e) => setLimitSize(e.target.checked)}
-                />
-                Max. Dateigröße (MB)
-              </label>
-              {limitSize && (
-                <input
-                  type="number"
-                  min="1"
-                  value={maxSizeMb}
-                  onChange={(e) => setMaxSizeMb(e.target.value)}
-                />
-              )}
-            </div>
-
-            <div className="resolution-option" style={{ marginTop: "1rem" }}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={changeResolution}
-                  onChange={(e) => setChangeResolution(e.target.checked)}
-                />
-                Auflösung ändern
-              </label>
-
-              {changeResolution && (
-                <div className="resolution-dropdown">
-                  <select
-                    value={resolution}
-                    onChange={(e) => setResolution(e.target.value)}
-                  >
-                    <option value="720p">720p</option>
-                    <option value="1080p">1080p</option>
-                    <option value="480p">480p</option>
-                    <option value="custom">Benutzerdefiniert</option>
-                  </select>
-
-                  {resolution === "custom" && (
-                    <div>
-                      <label>Breite:</label>
-                      <input
-                        type="number"
-                        value={customWidth}
-                        onChange={(e) => setCustomWidth(e.target.value)}
-                      />
-                      <label>Höhe:</label>
-                      <input
-                        type="number"
-                        value={customHeight}
-                        onChange={(e) => setCustomHeight(e.target.value)}
-                      />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <button
-              className="upload-button"
-              onClick={handleUpload}
-              disabled={uploading}
-            >
-              {uploading ? "Hochladen..." : "Hochladen"}
-            </button>
-          </div>
+          <VideoPlayer
+            videoURL={videoURL}
+            videoRef={videoRef}
+            progressBarRef={progressBarRef}
+            currentTime={currentTime}
+            duration={duration}
+            startTime={startTime}
+            endTime={endTime}
+            volume={volume}
+            playerVolume={playerVolume}
+            handleTimelineClick={handleTimelineClick}
+            togglePlayPause={togglePlayPause}
+            handleVolumeChange={handleVolumeChange}
+            handleSoundMultiplierChange={handleSoundMultiplierChange}
+            limitSize={limitSize}
+            setLimitSize={setLimitSize}
+            maxSizeMb={maxSizeMb}
+            setMaxSizeMb={setMaxSizeMb}
+            changeResolution={changeResolution}
+            setChangeResolution={setChangeResolution}
+            resolution={resolution}
+            setResolution={setResolution}
+            resolutionMapping={resolutionMapping}
+            customWidth={customWidth}
+            setCustomWidth={setCustomWidth}
+            customHeight={customHeight}
+            setCustomHeight={setCustomHeight}
+            handleUpload={handleUpload}
+            uploading={uploading}
+          />
         ) : (
           <p>Ziehe eine Videodatei hierher oder klicke, um eine Datei auszuwählen</p>
         )}
