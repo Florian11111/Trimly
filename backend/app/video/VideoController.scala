@@ -33,12 +33,17 @@ class VideoController @Inject()(
   }
 
 
-  // call videoService checkVideoExists (true or false)
   def checkVideo(filename: String): Action[AnyContent] = Action {
-    if (videoService.checkVideoExists(filename))
-      Ok(Json.obj("exists" -> true))
-    else
-      NotFound(Json.obj("exists" -> false, "message" -> "Video not found."))
+    if (videoService.checkVideoExists(filename)) {
+      videoService.getProcessedVideoFile(filename) match {
+        case Some(file) =>
+          Ok(Json.obj("exists" -> true, "size" -> file.length()))
+        case None =>
+          Ok(Json.obj("exists" -> false))
+      }
+    } else {
+      Ok(Json.obj("exists" -> false))
+    }
   }
 
   def download(filename: String): Action[AnyContent] = Action {

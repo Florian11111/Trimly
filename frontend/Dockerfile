@@ -1,6 +1,8 @@
 # Verwende ein Node.js-Image
 FROM node:latest
 
+RUN apt-get update && apt-get install -y neovim && rm -rf /var/lib/apt/lists/*
+
 # Setze das Arbeitsverzeichnis
 WORKDIR /app
 

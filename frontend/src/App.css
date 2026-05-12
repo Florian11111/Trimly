@@ -22,6 +22,60 @@ h1 {
   background-color: #f0f0f0;
 }
 
+.dropzone-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.dropzone {
+  border: 2px dashed #aaa;
+  border-radius: 10px;
+  padding: 30px;
+  background-color: #fafafa;
+  cursor: pointer;
+  min-height: 320px;
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 24px;
+}
+
+.dropzone.loaded {
+  border-style: dashed;
+  border-color: #aaa;
+  background-color: #fafafa;
+  cursor: default;
+  padding: 20px;
+}
+
+.dropzone:hover {
+  background-color: #f0f0f0;
+}
+
+.info-panel-side {
+  position: absolute;
+  top: 0;
+  right: -320px;
+  width: 240px;
+  padding: 16px;
+  background-color: #e5e7eb;
+  border: 1px solid #9ca3af;
+  border-radius: 10px;
+  color: #111827;
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+@media (max-width: 1050px) {
+  .info-panel-side {
+    position: static;
+    right: auto;
+    width: 100%;
+    margin-top: 16px;
+  }
+}
+
 .player {
   margin-top: 20px;
   position: relative;

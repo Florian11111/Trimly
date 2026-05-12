@@ -1,14 +1,12 @@
-# Verwende ein OpenJDK-Image für Scala/Play Framework
+# Verwende Debian als Basis für Scala/Play und installiere Java, ffmpeg sowie sbt per tarball
 FROM debian:latest
 
-RUN apt update && apt install -y curl default-jre
-
-# Installiere Java und sbt
-RUN echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" > /etc/apt/sources.list.d/sbt.list && \
-    echo "deb https://repo.scala-sbt.org/scalasbt/debian /" > /etc/apt/sources.list.d/sbt_old.list && \
-	curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" > /etc/apt/trusted.gpg.d/sbt.asc && \
-	apt-get update && \
-	apt-get install -y sbt ffmpeg
+RUN apt-get update && apt-get install -y curl default-jre ffmpeg neovim && \
+    mkdir -p /opt && \
+    curl -L -o /tmp/sbt.tgz https://github.com/sbt/sbt/releases/download/v1.12.11/sbt-1.12.11.tgz && \
+    tar -xzf /tmp/sbt.tgz -C /opt && \
+    rm -f /tmp/sbt.tgz && \
+    ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt
 
 # Setze das Arbeitsverzeichnis
 WORKDIR /app

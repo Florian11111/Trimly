@@ -39,8 +39,8 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
       file.delete()
     }
     println("done processing currently Delte!")
-    // delete filePathReady after 1 minute
-    actorSystem.scheduler.scheduleOnce(1.minutes) {
+    // delete filePathReady after 5 minutes
+    actorSystem.scheduler.scheduleOnce(5.minutes) {
       val readyFile = new File(filePathReady)
       if (readyFile.exists()) {
         readyFile.delete()
@@ -57,9 +57,14 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     val endTime   = data.dataParts.get("endTime").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
     val volume    = data.dataParts.get("volume").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(1.0)
     val maxSizeMb = data.dataParts.get("maxSizeMb").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(-1.0)
-    val width     = data.dataParts.get("width").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
-    val height    = data.dataParts.get("height").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
-    val resolution    = data.dataParts.get("resolution").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
+    val width: Option[Int] = data.dataParts.get("resolution").flatMap(_.headOption).flatMap { s =>
+      val parts = s.split("x")
+      if (parts.length == 2) Try(parts(0).toInt).toOption else None
+    }
+    val height: Option[Int] = data.dataParts.get("resolution").flatMap(_.headOption).flatMap { s =>
+      val parts = s.split("x")
+      if (parts.length == 2) Try(parts(1).toInt).toOption else None
+    }
     val framerate = data.dataParts.get("framerate").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption)
 
     val randomSuffix = Random.alphanumeric.take(10).mkString
