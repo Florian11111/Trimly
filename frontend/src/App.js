@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import "./App.css";
 import VideoPlayer from "./VideoPlayer";
 
+const API = process.env.REACT_APP_API_URL || "${API}";
 
 function App() {
   const [videoFile, setVideoFile] = useState(null);
@@ -103,7 +104,7 @@ function App() {
   };
 
   const doDownload = async (filename) => {
-    const downloadUrl = `http://localhost:9000/download/${encodeURIComponent(filename)}`;
+    const downloadUrl = `${API}/download/${encodeURIComponent(filename)}`;
     const response = await fetch(downloadUrl);
     const blob = await response.blob();
     const blobUrl = URL.createObjectURL(blob);
@@ -129,7 +130,7 @@ function App() {
 
     try {
       const formData = buildFormData();
-      const res = await fetch("http://localhost:9000/upload", { method: "POST", body: formData });
+      const res = await fetch("${API}/upload", { method: "POST", body: formData });
       const result = await res.json();
 
       if (result.status !== "success") {
@@ -139,7 +140,7 @@ function App() {
       }
 
       const filename = result.filename;
-      const checkUrl = `http://localhost:9000/check/${encodeURIComponent(filename)}`;
+      const checkUrl = `${API}/check/${encodeURIComponent(filename)}`;
 
       for (let i = 0; i < 300; i++) {
         await new Promise(r => setTimeout(r, 1000));
