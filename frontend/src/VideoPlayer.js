@@ -44,6 +44,7 @@ export default function VideoPlayer({
   handlePreview,
   handleReset,
   previewing,
+  uploadProgress,
   originalFileSize,
   previewFileSize,
   canDownload,
@@ -180,6 +181,25 @@ export default function VideoPlayer({
           ✕ Neues Video
         </button>
       </div>
+      {uploadProgress !== null && (
+        <div style={{ marginBottom: "8px" }}>
+          <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: "4px" }}>
+            Upload: {uploadProgress}%
+          </div>
+          <div style={{ height: "6px", backgroundColor: "#e5e7eb", borderRadius: "3px", overflow: "hidden" }}>
+            <div
+              style={{
+                height: "100%",
+                width: `${uploadProgress}%`,
+                backgroundColor: "#2563eb",
+                borderRadius: "3px",
+                transition: "width 0.2s ease",
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Video + Volume Overlay */}
       <div className="video-wrapper">
         <video

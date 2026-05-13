@@ -28,6 +28,7 @@ function App() {
   const [previewFileSize, setPreviewFileSize] = useState(null);
   const [currentUploadFilename, setCurrentUploadFilename] = useState(null);
   const [previewing, setPreviewing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [previewedSettings, setPreviewedSettings] = useState(null);
   const [storedOriginalId, setStoredOriginalId] = useState(null);
   const videoRef = useRef(null);
@@ -65,19 +66,30 @@ function App() {
       setCurrentUploadFilename(null);
       setStoredOriginalId(null);
       setMessage("Video wird hochgeladen...");
+      setUploadProgress(0);
       const formData = new FormData();
       formData.append("video", file);
-      fetch(`${API}/store`, { method: "POST", body: formData })
-        .then(r => r.json())
-        .then(result => {
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        setUploadProgress(null);
+        try {
+          const result = JSON.parse(xhr.responseText);
           if (result.status === "success") {
             setStoredOriginalId(result.originalId);
             setMessage("");
           } else {
             setMessage("Fehler beim Hochladen: " + result.message);
           }
-        })
-        .catch(err => setMessage("Fehler: " + err.message));
+        } catch {
+          setMessage("Fehler beim Hochladen");
+        }
+      };
+      xhr.onerror = () => { setUploadProgress(null); setMessage("Fehler beim Hochladen"); };
+      xhr.open("POST", `${API}/store`);
+      xhr.send(formData);
     }
   };
 
@@ -97,6 +109,7 @@ function App() {
     setCurrentUploadFilename(null);
     setPreviewedSettings(null);
     setStoredOriginalId(null);
+    setUploadProgress(null);
     videoFileRef.current = null;
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -380,6 +393,7 @@ function App() {
               handleDownload={handleDownload}
               handleReset={handleReset}
               previewing={previewing}
+              uploadProgress={uploadProgress}
               handleLoadedMetadata={handleLoadedMetadata}
               handleTimeUpdate={handleTimeUpdate}
               setStartTime={setStartTime}
