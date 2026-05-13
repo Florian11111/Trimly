@@ -42,6 +42,7 @@ export default function VideoPlayer({
   setMessage,
   handleDownload,
   handlePreview,
+  handleReset,
   previewing,
   originalFileSize,
   previewFileSize,
@@ -161,6 +162,24 @@ export default function VideoPlayer({
 
   return (
     <div className="p-4 space-y-4">
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <button
+          type="button"
+          onClick={handleReset}
+          style={{
+            padding: "6px 14px",
+            backgroundColor: "#dc2626",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontWeight: "600",
+            fontSize: "0.85rem",
+          }}
+        >
+          ✕ Neues Video
+        </button>
+      </div>
       {/* Video + Volume Overlay */}
       <div className="video-wrapper">
         <video

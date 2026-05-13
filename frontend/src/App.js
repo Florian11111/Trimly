@@ -29,6 +29,7 @@ function App() {
   const [currentUploadFilename, setCurrentUploadFilename] = useState(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewedSettings, setPreviewedSettings] = useState(null);
+  const [storedOriginalId, setStoredOriginalId] = useState(null);
   const videoRef = useRef(null);
   const progressBarRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -62,8 +63,42 @@ function App() {
       setOriginalFileSize(file.size);
       setPreviewFileSize(null);
       setCurrentUploadFilename(null);
-      setMessage("");
+      setStoredOriginalId(null);
+      setMessage("Video wird hochgeladen...");
+      const formData = new FormData();
+      formData.append("video", file);
+      fetch(`${API}/store`, { method: "POST", body: formData })
+        .then(r => r.json())
+        .then(result => {
+          if (result.status === "success") {
+            setStoredOriginalId(result.originalId);
+            setMessage("");
+          } else {
+            setMessage("Fehler beim Hochladen: " + result.message);
+          }
+        })
+        .catch(err => setMessage("Fehler: " + err.message));
     }
+  };
+
+  const handleReset = () => {
+    setVideoFile(null);
+    setVideoURL(null);
+    setStartTime(0);
+    setEndTime(0);
+    setDuration(0);
+    setCurrentTime(0);
+    setVolume(1.0);
+    setPlayerVolume(1.0);
+    setMode("medium");
+    setMessage("");
+    setOriginalFileSize(null);
+    setPreviewFileSize(null);
+    setCurrentUploadFilename(null);
+    setPreviewedSettings(null);
+    setStoredOriginalId(null);
+    videoFileRef.current = null;
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   // Baut FormData mit allen aktuellen Settings
@@ -77,7 +112,7 @@ function App() {
     const preset = presets[mode];
 
     const formData = new FormData();
-    formData.append("video", videoFileRef.current);
+    formData.append("originalId", storedOriginalId);
     formData.append("startTime", Math.floor(startTime * 1000));
     formData.append("endTime", Math.floor(endTime * 1000));
     formData.append("volume", volume);
@@ -124,7 +159,10 @@ function App() {
 
   // Verarbeitet Video mit aktuellen Settings, speichert temporär
   const handlePreview = async (autoDownload = false) => {
-    if (!videoFileRef.current) return;
+    if (!storedOriginalId) {
+      setMessage("Video wird noch hochgeladen, bitte kurz warten...");
+      return;
+    }
     setPreviewing(true);
     setPreviewFileSize(null);
     setCurrentUploadFilename(null);
@@ -132,7 +170,7 @@ function App() {
 
     try {
       const formData = buildFormData();
-      const res = await fetch(`${API}/upload`, { method: "POST", body: formData });
+      const res = await fetch(`${API}/process`, { method: "POST", body: formData });
       const result = await res.json();
 
       if (result.status !== "success") {
@@ -340,6 +378,7 @@ function App() {
               setCustomHeight={setCustomHeight}
               handlePreview={handlePreview}
               handleDownload={handleDownload}
+              handleReset={handleReset}
               previewing={previewing}
               handleLoadedMetadata={handleLoadedMetadata}
               handleTimeUpdate={handleTimeUpdate}
