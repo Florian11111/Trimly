@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect } from "react";
 import "./App.css";
 import VideoPlayer from "./VideoPlayer";
 
-const API = process.env.REACT_APP_API_URL || "${API}";
+const API = process.env.REACT_APP_API_URL !== undefined
+  ? process.env.REACT_APP_API_URL   // Prod: "" → relativ, nginx proxied
+  : "http://localhost:9000";         // Dev: kein Build, kein Env gesetzt
 
 function App() {
   const [videoFile, setVideoFile] = useState(null);
@@ -130,7 +132,7 @@ function App() {
 
     try {
       const formData = buildFormData();
-      const res = await fetch("${API}/upload", { method: "POST", body: formData });
+      const res = await fetch(`${API}/upload`, { method: "POST", body: formData });
       const result = await res.json();
 
       if (result.status !== "success") {
