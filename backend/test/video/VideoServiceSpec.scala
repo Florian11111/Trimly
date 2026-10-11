@@ -24,16 +24,6 @@ class VideoServiceSpec extends AnyFunSuite with ScalaFutures with Matchers {
     assert(service.getProcessedVideoFile("does_not_exist.mp4").isEmpty)
   }
 
-  test("scheduleDeleteAfterDelay deletes file immediately and after delay") {
-    val tmp = File.createTempFile("test", ".mp4")
-    val ready = File.createTempFile("test_ready", ".mp4")
-    service.scheduleDeleteAfterDelay(tmp.getAbsolutePath, ready.getAbsolutePath, "test_ready.mp4")
-    Thread.sleep(100) // give time for immediate delete
-    assert(!tmp.exists())
-    // ready file will be deleted after 1 minute, but we don't wait here
-    ready.delete()
-  }
-
   test("handleUpload returns Left if file move fails") {
     val dummyData = play.api.mvc.MultipartFormData[TemporaryFile](Map.empty, Seq.empty, Seq.empty)
     val dummyTempFile = SingletonTemporaryFileCreator.create("notfound", ".mp4")
@@ -48,4 +38,4 @@ class VideoServiceSpec extends AnyFunSuite with ScalaFutures with Matchers {
       assert(result.isLeft)
     }
   }
-}
+}

@@ -10,6 +10,9 @@ case class VideoConversion(
     width: Option[Int],
     height: Option[Int],
     volume: Option[Double],
+    maxSizeMb: Option[Double] = None,
+    trimOnly: Boolean = false, // nur schneiden, nicht neu kodieren
+    removeAudio: Boolean = false, // Ausgabe ohne Tonspur
 )
 
 case class VideoInfo(

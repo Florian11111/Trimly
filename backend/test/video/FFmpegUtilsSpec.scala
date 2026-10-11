@@ -41,9 +41,10 @@ class FFmpegUtilsSpec extends AnyFunSuite {
 
   test("processVideo returns Right for valid input file") {
     if (testFile.exists()) {
+      val out = File.createTempFile("dummy", ".mp4")
       val conversion = VideoConversion(
         filePath = testFile.getAbsolutePath,
-        filePathReady = "dummy.mp4",
+        filePathReady = out.getAbsolutePath,
         startTime = Some(0),
         endTime = Some(1000),
         bitrate = Some(300_000L),
@@ -53,6 +54,7 @@ class FFmpegUtilsSpec extends AnyFunSuite {
         volume = Some(1.0)
       )
       val result = FFmpegUtils.processVideo(conversion)
+      out.delete()
       assert(result.isRight)
     }
   }

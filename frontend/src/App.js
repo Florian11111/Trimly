@@ -1,26 +1,32 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./App.css";
 import VideoPlayer from "./VideoPlayer";
+import { PRESETS, DEFAULT_FINETUNE } from "./presets";
 
 const API = process.env.REACT_APP_API_URL !== undefined
   ? process.env.REACT_APP_API_URL   // Prod: "" → relativ, nginx proxied
   : "http://localhost:9000";         // Dev: kein Build, kein Env gesetzt
 
+// Mindestlänge des Ausschnitts in Sekunden
+const MIN_CLIP = 0.1;
+
+const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".mov", ".webm", ".avi"];
+
+// Muss zu VideoCalculator.AudioBitrateKbps im Backend passen
+const AUDIO_KBPS = 128;
+
 function App() {
-  const [videoFile, setVideoFile] = useState(null);
   const [videoURL, setVideoURL] = useState(null);
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(1.0);
+  const [removeAudio, setRemoveAudio] = useState(false);
   const [playerVolume, setPlayerVolume] = useState(1.0);
   const [limitSize, setLimitSize] = useState(false);
   const [maxSizeMb, setMaxSizeMb] = useState(100);
-  const [changeResolution, setChangeResolution] = useState(false);
-  const [resolution, setResolution] = useState("720p");
-  const [customWidth, setCustomWidth] = useState("");
-  const [customHeight, setCustomHeight] = useState("");
+  const [finetune, setFinetune] = useState(DEFAULT_FINETUNE);
   const [mode, setMode] = useState("medium");
   const [message, setMessage] = useState("");
   const [originalFileName, setOriginalFileName] = useState("");
@@ -32,9 +38,8 @@ function App() {
   const [previewedSettings, setPreviewedSettings] = useState(null);
   const [storedOriginalId, setStoredOriginalId] = useState(null);
   const videoRef = useRef(null);
-  const progressBarRef = useRef(null);
   const fileInputRef = useRef(null);
-  const videoFileRef = useRef(null);
+  const uploadXhrRef = useRef(null);
 
   const formatFileSize = (bytes) => {
     if (!bytes) return "0 B";
@@ -44,63 +49,98 @@ function App() {
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
   };
 
-  const resolutionMapping = {
-    "720p": { width: 1280, height: 720 },
-    "1080p": { width: 1920, height: 1080 },
-    "480p": { width: 854, height: 480 },
-  };
-
-  const openFileDialog = () => {
-    if (!videoURL) fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file && file.type.startsWith("video/")) {
-      videoFileRef.current = file;
-      setVideoFile(file);
-      setOriginalFileName(file.name);
-      setVideoURL(URL.createObjectURL(file));
-      setOriginalFileSize(file.size);
-      setPreviewFileSize(null);
-      setCurrentUploadFilename(null);
-      setStoredOriginalId(null);
-      setMessage("Video wird hochgeladen...");
-      setUploadProgress(0);
-      const formData = new FormData();
-      formData.append("video", file);
-      const xhr = new XMLHttpRequest();
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
-      };
-      xhr.onload = () => {
-        setUploadProgress(null);
-        try {
-          const result = JSON.parse(xhr.responseText);
-          if (result.status === "success") {
-            setStoredOriginalId(result.originalId);
-            setMessage("");
-          } else {
-            setMessage("Fehler beim Hochladen: " + result.message);
-          }
-        } catch {
-          setMessage("Fehler beim Hochladen");
-        }
-      };
-      xhr.onerror = () => { setUploadProgress(null); setMessage("Fehler beim Hochladen"); };
-      xhr.open("POST", `${API}/store`);
-      xhr.send(formData);
+  const openFileDialog = async () => {
+    if (videoURL) return;
+    // Chrome/Edge: Dialog im Videos-Ordner starten (dort speichern NVIDIA App und AMD ReLive),
+    // danach merkt sich der Browser über die id den zuletzt benutzten Unterordner
+    if (window.showOpenFilePicker) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          id: "trimly-videos",
+          startIn: "videos",
+          types: [{ description: "Videos", accept: { "video/*": VIDEO_EXTENSIONS } }],
+        });
+        loadFile(await handle.getFile());
+      } catch (err) {
+        if (err.name !== "AbortError") fileInputRef.current?.click();
+      }
+      return;
     }
+    fileInputRef.current?.click();
   };
+
+  // Gemeinsam für Dateiauswahl und Drag & Drop: Datei anzeigen und im Hintergrund hochladen
+  const loadFile = (file) => {
+    const isVideo = file && (file.type.startsWith("video/") ||
+      VIDEO_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext)));
+    if (!isVideo) {
+      setMessage("Fehler: Bitte eine Videodatei auswählen.");
+      return;
+    }
+    uploadXhrRef.current?.abort();
+    if (videoURL) URL.revokeObjectURL(videoURL);
+
+    setOriginalFileName(file.name);
+    setVideoURL(URL.createObjectURL(file));
+    setOriginalFileSize(file.size);
+    setStartTime(0);
+    setEndTime(0);
+    setDuration(0);
+    setPreviewFileSize(null);
+    setCurrentUploadFilename(null);
+    setPreviewedSettings(null);
+    setStoredOriginalId(null);
+    setMessage("Video wird hochgeladen...");
+    setUploadProgress(0);
+
+    const formData = new FormData();
+    formData.append("video", file);
+    const xhr = new XMLHttpRequest();
+    uploadXhrRef.current = xhr;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      uploadXhrRef.current = null;
+      setUploadProgress(null);
+      if (xhr.status === 413) {
+        setMessage("Fehler beim Hochladen: Datei ist zu groß für den Server.");
+        return;
+      }
+      try {
+        const result = JSON.parse(xhr.responseText);
+        if (result.status === "success") {
+          setStoredOriginalId(result.originalId);
+          setMessage("");
+        } else {
+          setMessage("Fehler beim Hochladen: " + result.message);
+        }
+      } catch {
+        setMessage(`Fehler beim Hochladen (HTTP ${xhr.status})`);
+      }
+    };
+    xhr.onerror = () => {
+      uploadXhrRef.current = null;
+      setUploadProgress(null);
+      setMessage("Fehler beim Hochladen: Server nicht erreichbar.");
+    };
+    xhr.open("POST", `${API}/store`);
+    xhr.send(formData);
+  };
+
+  const handleFileChange = (e) => loadFile(e.target.files[0]);
 
   const handleReset = () => {
-    setVideoFile(null);
+    uploadXhrRef.current?.abort();
+    uploadXhrRef.current = null;
+    if (videoURL) URL.revokeObjectURL(videoURL);
     setVideoURL(null);
     setStartTime(0);
     setEndTime(0);
     setDuration(0);
     setCurrentTime(0);
     setVolume(1.0);
+    setRemoveAudio(false);
     setPlayerVolume(1.0);
     setMode("medium");
     setMessage("");
@@ -110,192 +150,213 @@ function App() {
     setPreviewedSettings(null);
     setStoredOriginalId(null);
     setUploadProgress(null);
-    videoFileRef.current = null;
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  // Baut FormData mit allen aktuellen Settings
-  const buildFormData = () => {
-    const presets = {
-      low:      { fps: 24, resolution: "854x480",   bitrate: 1000 },
-      medium:   { fps: 30, resolution: "1280x720",  bitrate: 2500 },
-      high:     { fps: 60, resolution: "1920x1080", bitrate: 5000 },
-      finetune: { fps: 30, resolution: "1280x720",  bitrate: 2500 },
+  // Alle Einstellungen, die das Ergebnis beeinflussen
+  const getSettings = () => {
+    if (mode === "original") {
+      return {
+        mode,
+        startMs: Math.floor(startTime * 1000),
+        endMs: Math.floor(endTime * 1000),
+        volume,
+        removeAudio,
+      };
+    }
+    let fps, resolution, bitrate;
+    if (mode === "finetune") {
+      fps = finetune.fps;
+      bitrate = finetune.bitrate;
+      resolution = finetune.resolution === "custom"
+        ? `${finetune.customWidth}x${finetune.customHeight}`
+        : finetune.resolution;
+    } else {
+      ({ fps, resolution, bitrate } = PRESETS[mode]);
+    }
+    return {
+      mode,
+      startMs: Math.floor(startTime * 1000),
+      endMs: Math.floor(endTime * 1000),
+      volume,
+      removeAudio,
+      fps,
+      resolution,
+      bitrate,
+      maxSizeMb: limitSize ? maxSizeMb : null,
     };
-    const preset = presets[mode];
+  };
 
+  const validateSettings = (s) => {
+    if (s.mode === "original") return null;
+    const [w, h] = s.resolution.split("x").map(Number);
+    if (!(w >= 16 && h >= 16)) return "Bitte gültige Breite und Höhe angeben.";
+    if (!(s.fps > 0)) return "Bitte gültige FPS angeben.";
+    if (!(s.bitrate > 0)) return "Bitte gültige Bitrate angeben.";
+    if (s.maxSizeMb !== null && !(s.maxSizeMb > 0)) return "Bitte gültige Maximalgröße angeben.";
+    return null;
+  };
+
+  const buildFormData = (s) => {
     const formData = new FormData();
     formData.append("originalId", storedOriginalId);
-    formData.append("startTime", Math.floor(startTime * 1000));
-    formData.append("endTime", Math.floor(endTime * 1000));
-    formData.append("volume", volume);
-    formData.append("framerate", preset.fps);
-    formData.append("bitrate", preset.bitrate);
-
-    if (limitSize) formData.append("maxSizeMb", maxSizeMb);
-
-    let resolutionWidth, resolutionHeight;
-    if (mode !== "finetune") {
-      [resolutionWidth, resolutionHeight] = preset.resolution.split("x");
-    } else if (changeResolution) {
-      if (resolution === "custom") {
-        resolutionWidth = customWidth;
-        resolutionHeight = customHeight;
-      } else {
-        resolutionWidth = resolutionMapping[resolution].width;
-        resolutionHeight = resolutionMapping[resolution].height;
-      }
-    }
-    if (resolutionWidth && resolutionHeight) {
-      formData.append("resolution", `${resolutionWidth}x${resolutionHeight}`);
-    }
-
+    formData.append("mode", s.mode);
+    formData.append("startTime", s.startMs);
+    formData.append("endTime", s.endMs);
+    formData.append("volume", s.volume);
+    formData.append("removeAudio", s.removeAudio);
+    if (s.mode === "original") return formData;
+    formData.append("framerate", s.fps);
+    formData.append("bitrate", s.bitrate);
+    formData.append("resolution", s.resolution);
+    if (s.maxSizeMb !== null) formData.append("maxSizeMb", s.maxSizeMb);
     return formData;
   };
 
-  const doDownload = async (filename) => {
-    const downloadUrl = `${API}/download/${encodeURIComponent(filename)}`;
-    const response = await fetch(downloadUrl);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
+  // Direkter Download-Link: der Browser streamt die Datei auf die Platte statt sie im RAM zu halten
+  const doDownload = (filename) => {
     const nameParts = originalFileName.split(".");
-    const ext = nameParts.pop();
+    const ext = nameParts.length > 1 ? nameParts.pop() : "mp4";
+    const downloadName = `${nameParts.join(".")}_trim.${ext}`;
     const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = `${nameParts.join(".")}_trim.${ext}`;
+    a.href = `${API}/download/${encodeURIComponent(filename)}?name=${encodeURIComponent(downloadName)}`;
+    a.download = downloadName;
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(blobUrl);
     setMessage("Download gestartet!");
   };
 
   // Verarbeitet Video mit aktuellen Settings, speichert temporär
   const handlePreview = async (autoDownload = false) => {
     if (!storedOriginalId) {
-      setMessage("Video wird noch hochgeladen, bitte kurz warten...");
+      setMessage(uploadProgress !== null
+        ? "Video wird noch hochgeladen, bitte kurz warten..."
+        : "Fehler: Video ist nicht auf dem Server. Bitte erneut auswählen.");
       return;
     }
+    const settings = getSettings();
+    const invalid = validateSettings(settings);
+    if (invalid) {
+      setMessage("Fehler: " + invalid);
+      return;
+    }
+
     setPreviewing(true);
     setPreviewFileSize(null);
     setCurrentUploadFilename(null);
     setMessage(autoDownload ? "Verarbeitung läuft, Download startet danach..." : "Verarbeitung läuft...");
 
     try {
-      const formData = buildFormData();
-      const res = await fetch(`${API}/process`, { method: "POST", body: formData });
+      const res = await fetch(`${API}/process`, { method: "POST", body: buildFormData(settings) });
       const result = await res.json();
 
       if (result.status !== "success") {
         setMessage("Fehler: " + result.message);
-        setPreviewing(false);
         return;
       }
 
       const filename = result.filename;
       const checkUrl = `${API}/check/${encodeURIComponent(filename)}`;
 
-      for (let i = 0; i < 300; i++) {
+      // Pollen bis fertig oder fehlgeschlagen (kein festes Zeitlimit, große Videos dauern)
+      for (;;) {
         await new Promise(r => setTimeout(r, 1000));
+        let d;
         try {
-          const r2 = await fetch(checkUrl);
-          const d = await r2.json();
-          if (d.exists === true && d.size) {
-            setCurrentUploadFilename(filename);
-            setPreviewFileSize(d.size);
-            setPreviewedSettings({ mode, startTime, endTime, volume });
-            setPreviewing(false);
-            if (autoDownload) {
-              await doDownload(filename);
-            } else {
-              setMessage("Preview bereit.");
-            }
-            return;
-          }
-        } catch (e) {}
+          d = await (await fetch(checkUrl)).json();
+        } catch {
+          continue; // kurzzeitiger Netzwerkfehler
+        }
+        if (d.status === "ready") {
+          setCurrentUploadFilename(filename);
+          setPreviewFileSize(d.size);
+          setPreviewedSettings(JSON.stringify(settings));
+          if (autoDownload) doDownload(filename);
+          else setMessage("Preview bereit.");
+          return;
+        }
+        if (d.status === "error") {
+          setMessage("Fehler bei der Verarbeitung: " + d.message);
+          return;
+        }
+        if (d.status === "unknown") {
+          setMessage("Fehler: Verarbeitungsauftrag unbekannt (Server neu gestartet?). Bitte Video erneut auswählen.");
+          return;
+        }
       }
     } catch (err) {
       setMessage("Fehler: " + err.message);
+    } finally {
+      setPreviewing(false);
     }
-    setPreviewing(false);
   };
 
-  // Settings haben sich seit letztem Preview geändert?
+  // Download nur ohne erneute Verarbeitung, wenn sich seit der Preview nichts geändert hat
   const canDownload = !!(
     currentUploadFilename &&
-    previewedSettings &&
-    previewedSettings.mode === mode &&
-    Math.abs(previewedSettings.startTime - startTime) < 0.05 &&
-    Math.abs(previewedSettings.endTime - endTime) < 0.05 &&
-    previewedSettings.volume === volume
+    previewedSettings === JSON.stringify(getSettings())
   );
+
+  // Sofortige Schätzung ohne Verarbeitung: Original = anteilige Dateigröße, sonst Bitrate × Länge
+  const estimateSize = () => {
+    const seconds = Math.max(0, endTime - startTime);
+    if (!duration || !originalFileSize || !seconds) return null;
+    if (mode === "original") return originalFileSize * (seconds / duration);
+    const s = getSettings();
+    let bytes = (s.bitrate + (removeAudio ? 0 : AUDIO_KBPS)) * 1000 / 8 * seconds;
+    if (s.maxSizeMb) bytes = Math.min(bytes, s.maxSizeMb * 1024 * 1024);
+    return bytes;
+  };
 
   // Download: direkt wenn Preview gültig, sonst Preview → Download
   const handleDownload = async () => {
-    if (canDownload) {
-      try {
-        setMessage("Download wird vorbereitet...");
-        await doDownload(currentUploadFilename);
-      } catch (err) {
-        setMessage("Fehler beim Download: " + err.message);
-      }
-    } else {
-      await handlePreview(true);
-    }
+    if (canDownload) doDownload(currentUploadFilename);
+    else await handlePreview(true);
   };
 
-  // Preview invalidieren wenn sich Settings ändern
-  useEffect(() => {
-    setPreviewFileSize(null);
-    setCurrentUploadFilename(null);
-  }, [mode]);
+  const updateStartTime = (t) => setStartTime(Math.max(0, Math.min(t, duration - MIN_CLIP)));
+  const updateEndTime = (t) => setEndTime(Math.max(MIN_CLIP, Math.min(t, duration)));
 
   const togglePlayPause = () => {
     const video = videoRef.current;
+    if (!video) return;
     if (video.paused) video.play();
     else video.pause();
   };
 
   const skipTime = React.useCallback((time) => {
     const video = videoRef.current;
+    if (!video) return;
     video.currentTime = Math.max(0, Math.min(duration, video.currentTime + time));
   }, [duration]);
 
   const changeVolume = React.useCallback((amount) => {
-    const newVolume = Math.min(1, Math.max(0, playerVolume + amount));
-    setPlayerVolume(newVolume);
-    if (videoRef.current) videoRef.current.volume = newVolume;
-  }, [playerVolume]);
+    setPlayerVolume(v => Math.min(1, Math.max(0, v + amount)));
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
+      if (!videoURL) return;
+      // Tastenkürzel nicht auslösen, während in Eingabefeldern getippt wird
+      if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && e.target.type !== "range" && e.target.type !== "checkbox") return;
       if (e.code === "Space") { e.preventDefault(); togglePlayPause(); }
       if (e.code === "Period") { e.preventDefault(); skipTime(1 / 30); }
       else if (e.code === "Comma") { e.preventDefault(); skipTime(-1 / 30); }
       if (e.code === "ArrowRight") { e.preventDefault(); skipTime(5); }
       else if (e.code === "ArrowLeft") { e.preventDefault(); skipTime(-5); }
-      if (e.code === "KeyS") setStartTime(currentTime);
-      else if (e.code === "KeyE") setEndTime(currentTime);
+      if (e.code === "KeyS") updateStartTime(currentTime);
+      else if (e.code === "KeyE") updateEndTime(currentTime);
       if (e.code === "ArrowUp") { e.preventDefault(); changeVolume(0.05); }
       else if (e.code === "ArrowDown") { e.preventDefault(); changeVolume(-0.05); }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [currentTime, volume, changeVolume, skipTime]);
+  });
 
   const handleDrop = (e) => {
     e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith("video/")) {
-      videoFileRef.current = file;
-      setVideoFile(file);
-      setOriginalFileName(file.name);
-      setVideoURL(URL.createObjectURL(file));
-      setOriginalFileSize(file.size);
-      setPreviewFileSize(null);
-      setCurrentUploadFilename(null);
-      setMessage("");
-    }
+    loadFile(e.dataTransfer.files[0]);
   };
 
   const handleDragOver = (e) => e.preventDefault();
@@ -303,6 +364,7 @@ function App() {
   const handleLoadedMetadata = () => {
     const vid = videoRef.current;
     setDuration(vid.duration);
+    setStartTime(0);
     setEndTime(vid.duration);
   };
 
@@ -310,30 +372,10 @@ function App() {
     setCurrentTime(videoRef.current.currentTime);
   };
 
-  const handleTimelineClick = (e) => {
-    const rect = progressBarRef.current.getBoundingClientRect();
-    const percent = (e.clientX - rect.left) / rect.width;
-    const newTime = duration * percent;
-    if (e.shiftKey) setStartTime(Math.min(newTime, endTime));
-    else if (e.altKey) setEndTime(Math.max(newTime, startTime));
-    else videoRef.current.currentTime = newTime;
-  };
-
-  const handleVolumeChange = (e) => {
-    const newVolume = parseFloat(e.target.value);
-    setPlayerVolume(newVolume);
-    if (videoRef.current) videoRef.current.volume = newVolume;
-  };
-
-  const handleSoundMultiplierChange = (e) => {
-    const newVolume = parseFloat(e.target.value);
-    setVolume(newVolume);
-    if (videoRef.current) videoRef.current.volume = playerVolume * newVolume;
-  };
-
+  // Ende immer hinter dem Start halten
   useEffect(() => {
-    if (endTime <= startTime) setEndTime(startTime + 1);
-  }, [startTime, endTime]);
+    if (duration > 0 && endTime <= startTime) setEndTime(Math.min(duration, startTime + 1));
+  }, [startTime, endTime, duration]);
 
   return (
     <div className="App">
@@ -348,7 +390,7 @@ function App() {
       />
 
       <div className="dropzone-wrapper">
-        {message && (
+        {message && !videoURL && (
           <p style={{ color: message.includes("Fehler") ? "red" : "green", marginBottom: "10px" }}>
             {message}
           </p>
@@ -365,30 +407,18 @@ function App() {
             <VideoPlayer
               videoURL={videoURL}
               videoRef={videoRef}
-              progressBarRef={progressBarRef}
               currentTime={currentTime}
               duration={duration}
               startTime={startTime}
               endTime={endTime}
               volume={volume}
               playerVolume={playerVolume}
-              handleTimelineClick={handleTimelineClick}
-              togglePlayPause={togglePlayPause}
-              handleVolumeChange={handleVolumeChange}
-              handleSoundMultiplierChange={handleSoundMultiplierChange}
               limitSize={limitSize}
               setLimitSize={setLimitSize}
               maxSizeMb={maxSizeMb}
               setMaxSizeMb={setMaxSizeMb}
-              changeResolution={changeResolution}
-              setChangeResolution={setChangeResolution}
-              resolution={resolution}
-              setResolution={setResolution}
-              resolutionMapping={resolutionMapping}
-              customWidth={customWidth}
-              setCustomWidth={setCustomWidth}
-              customHeight={customHeight}
-              setCustomHeight={setCustomHeight}
+              finetune={finetune}
+              setFinetune={setFinetune}
               handlePreview={handlePreview}
               handleDownload={handleDownload}
               handleReset={handleReset}
@@ -396,19 +426,19 @@ function App() {
               uploadProgress={uploadProgress}
               handleLoadedMetadata={handleLoadedMetadata}
               handleTimeUpdate={handleTimeUpdate}
-              setStartTime={setStartTime}
-              setEndTime={setEndTime}
-              setDuration={setDuration}
-              setCurrentTime={setCurrentTime}
+              setStartTime={updateStartTime}
+              setEndTime={updateEndTime}
               setVolume={setVolume}
+              removeAudio={removeAudio}
+              setRemoveAudio={setRemoveAudio}
               setPlayerVolume={setPlayerVolume}
               mode={mode}
               setMode={setMode}
               message={message}
               setMessage={setMessage}
               originalFileSize={originalFileSize}
-              previewFileSize={previewFileSize}
-              canDownload={canDownload}
+              previewFileSize={canDownload ? previewFileSize : null}
+              estimatedSize={estimateSize()}
               formatFileSize={formatFileSize}
             />
           )}

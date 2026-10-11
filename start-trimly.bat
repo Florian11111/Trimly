@@ -3,12 +3,20 @@ rem Wechsel in das Verzeichnis des Skripts, damit docker-compose im Projektstamm
 cd /d "%~dp0"
 echo Starte Docker Compose...
 
+rem Mit NVIDIA-Karte GPU-Encoding aktivieren (siehe docker-compose.gpu.yml)
+set "COMPOSE_FILES=-f docker-compose.yml"
+where nvidia-smi >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    echo NVIDIA-GPU gefunden, GPU-Encoding wird aktiviert.
+    set "COMPOSE_FILES=-f docker-compose.yml -f docker-compose.gpu.yml"
+)
+
 rem Versuche zuerst den neuen Docker CLI-Befehl, sonst fallback auf docker-compose
 docker compose version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    docker-compose up -d
+    docker-compose %COMPOSE_FILES% up -d
 ) else (
-    docker compose up -d
+    docker compose %COMPOSE_FILES% up -d
 )
 
 if %ERRORLEVEL% neq 0 (

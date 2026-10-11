@@ -65,25 +65,32 @@ class VideoController @Inject()(
   }
 
   def checkVideo(filename: String): Action[AnyContent] = Action {
-    if (videoService.checkVideoExists(filename)) {
-      videoService.getProcessedVideoFile(filename) match {
-        case Some(file) =>
-          println(s"[CHECK] Ready: $filename  size=${file.length()} bytes")
-          Ok(Json.obj("exists" -> true, "size" -> file.length()))
-        case None =>
-          println(s"[CHECK] Status Ready aber Datei fehlt: $filename")
-          Ok(Json.obj("exists" -> false))
-      }
-    } else {
-      Ok(Json.obj("exists" -> false))
+    videoService.getStatus(filename) match {
+      case Some(VideoStatus.Ready) =>
+        videoService.getProcessedVideoFile(filename) match {
+          case Some(file) =>
+            println(s"[CHECK] Ready: $filename  size=${file.length()} bytes")
+            Ok(Json.obj("exists" -> true, "status" -> "ready", "size" -> file.length()))
+          case None =>
+            println(s"[CHECK] Status Ready aber Datei fehlt: $filename")
+            Ok(Json.obj("exists" -> false, "status" -> "error", "message" -> "Ergebnisdatei fehlt"))
+        }
+      case Some(VideoStatus.Failed(error)) =>
+        Ok(Json.obj("exists" -> false, "status" -> "error", "message" -> error))
+      case Some(VideoStatus.Computing) =>
+        Ok(Json.obj("exists" -> false, "status" -> "computing"))
+      case None =>
+        Ok(Json.obj("exists" -> false, "status" -> "unknown"))
     }
   }
 
-  def download(filename: String): Action[AnyContent] = Action {
+  def download(filename: String, name: Option[String]): Action[AnyContent] = Action {
     videoService.getProcessedVideoFile(filename) match {
       case Some(file) =>
         println(s"[DOWNLOAD] $filename  size=${file.length()} bytes")
-        Ok.sendFile(file, inline = false)
+        // Gewünschter Dateiname für den Browser, ohne Pfadanteile
+        val downloadName = name.map(_.replaceAll("""[\\/]""", "_")).filter(_.nonEmpty).getOrElse(filename)
+        Ok.sendFile(file, inline = false, fileName = _ => Some(downloadName))
       case None =>
         println(s"[DOWNLOAD] Nicht gefunden: $filename")
         NotFound("File not found.")

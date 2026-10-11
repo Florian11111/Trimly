@@ -13,9 +13,11 @@ import video.VideoConversion
 
 import scala.collection.concurrent.TrieMap
 
-object VideoStatus extends Enumeration {
-  type VideoStatus = Value
-  val Computing, Ready = Value
+sealed trait VideoStatus
+object VideoStatus {
+  case object Computing extends VideoStatus
+  case object Ready extends VideoStatus
+  case class Failed(message: String) extends VideoStatus
 }
 import VideoStatus._
 
@@ -34,6 +36,9 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
 
   println(s"[INIT] processedDir: ${processedDir.getAbsolutePath}")
   println(s"[INIT] originalsDir: ${originalsDir.getAbsolutePath}")
+
+  // GPU-Erkennung + CUDA-Aufwärmen im Hintergrund, damit der erste Job nicht wartet
+  Future(FFmpegUtils.gpuAvailable)
 
   // ─── Original speichern, 1 Stunde behalten ───────────────────────────────
 
@@ -81,7 +86,7 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     val startTime = data.dataParts.get("startTime").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
     val endTime   = data.dataParts.get("endTime").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
     val volume    = data.dataParts.get("volume").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(1.0)
-    val maxSizeMb = data.dataParts.get("maxSizeMb").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).getOrElse(-1.0)
+    val maxSizeMb = data.dataParts.get("maxSizeMb").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption).filter(_ > 0)
     val framerate = data.dataParts.get("framerate").flatMap(_.headOption).flatMap(s => Try(s.toDouble).toOption)
     val width: Option[Int] = data.dataParts.get("resolution").flatMap(_.headOption).flatMap { s =>
       val parts = s.split("x"); if (parts.length == 2) Try(parts(0).toInt).toOption else None
@@ -90,12 +95,15 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
       val parts = s.split("x"); if (parts.length == 2) Try(parts(1).toInt).toOption else None
     }
     val bitrate = data.dataParts.get("bitrate").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption)
+    // mode=original: nur schneiden, Auflösung/Bitrate/Größenlimit werden ignoriert
+    val trimOnly = data.dataParts.get("mode").flatMap(_.headOption).contains("original")
+    val removeAudio = data.dataParts.get("removeAudio").flatMap(_.headOption).contains("true")
 
     val suffix       = Random.alphanumeric.take(8).mkString
     val outFilename  = s"${baseName}_${suffix}_r.mp4"
     val outPath      = new File(processedDir, outFilename).getAbsolutePath
 
-    println(s"[PROCESS] Settings: start=$startTime end=$endTime vol=$volume fps=$framerate bitrate=$bitrate res=${width}x${height} maxSize=$maxSizeMb")
+    println(s"[PROCESS] Settings: start=$startTime end=$endTime vol=$volume fps=$framerate bitrate=$bitrate res=${width}x${height} maxSize=$maxSizeMb trimOnly=$trimOnly removeAudio=$removeAudio")
     println(s"[PROCESS] Output: $outPath")
 
     val conv = VideoConversion(
@@ -107,7 +115,10 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
       framerate     = framerate,
       width         = width,
       height        = height,
-      volume        = Some(volume)
+      volume        = Some(volume),
+      maxSizeMb     = if (trimOnly) None else maxSizeMb,
+      trimOnly      = trimOnly,
+      removeAudio   = removeAudio
     )
 
     videoStatusMap.put(outFilename, Computing)
@@ -130,16 +141,25 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
             }
           case Left(error) =>
             println(s"[FFMPEG] Fehler bei $outFilename: $error")
-            videoStatusMap.remove(outFilename)
+            markFailed(outFilename, outPath, error)
         }
       } catch {
         case ex: Throwable =>
           println(s"[FFMPEG] Exception bei $outFilename: ${ex.getMessage}")
-          videoStatusMap.remove(outFilename)
+          markFailed(outFilename, outPath, s"Interner Fehler: ${ex.getMessage}")
       }
     }).start()
 
     Future.successful(Right(outFilename))
+  }
+
+  // Fehler merken, damit /check ihn melden kann; halbfertige Ausgabe löschen
+  private def markFailed(outFilename: String, outPath: String, error: String): Unit = {
+    videoStatusMap.update(outFilename, Failed(error))
+    new File(outPath).delete()
+    actorSystem.scheduler.scheduleOnce(10.minutes) {
+      videoStatusMap.remove(outFilename)
+    }
   }
 
   // ─── Legacy: Upload mit Datei (Fallback falls kein Store verwendet) ──────
@@ -157,8 +177,12 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
   def checkVideoExists(filename: String): Boolean =
     videoStatusMap.get(filename).contains(Ready)
 
+  def getStatus(filename: String): Option[VideoStatus] =
+    videoStatusMap.get(filename)
+
+  // Nur bekannte, fertige Jobs ausliefern (verhindert z.B. "../" im Dateinamen)
   def getProcessedVideoFile(filename: String): Option[File] = {
     val f = new File(processedDir, filename)
-    if (f.exists()) Some(f) else None
+    if (checkVideoExists(filename) && f.isFile) Some(f) else None
   }
 }

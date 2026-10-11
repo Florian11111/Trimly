@@ -10,6 +10,8 @@ services:
       - /app/node_modules
     environment:
       - CHOKIDAR_USEPOLLING=true
+      # webpack 5 (react-scripts 5) erkennt Änderungen auf Windows-Laufwerken nur per Polling
+      - WATCHPACK_POLLING=true
     stdin_open: true
     tty: true
 
@@ -27,4 +29,4 @@ services:
 
 # command to build and run
 
-# docker compose up --build
+# docker compose up --build

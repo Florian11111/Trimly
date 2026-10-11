@@ -1,40 +1,40 @@
 import React, { useRef, useState, useEffect } from "react";
 import "./VideoPlayer.css";
+import { PRESETS, RESOLUTION_OPTIONS } from "./presets";
 
-export default function VideoPlayer({ 
-  videoURL, 
-  videoRef, 
-  progressBarRef, 
-  currentTime, 
-  duration, 
-  startTime, 
-  endTime, 
-  volume, 
-  playerVolume, 
-  handleTimelineClick, 
-  togglePlayPause, 
-  handleVolumeChange, 
-  handleSoundMultiplierChange, 
-  limitSize, 
-  setLimitSize, 
-  maxSizeMb, 
-  setMaxSizeMb, 
-  changeResolution, 
-  setChangeResolution, 
-  resolution, 
-  setResolution, 
-  resolutionMapping, 
-  customWidth, 
-  setCustomWidth, 
-  customHeight, 
-  setCustomHeight, 
+const inputStyle = {
+  width: "100%",
+  padding: "6px 8px",
+  border: "1px solid #d1d5db",
+  borderRadius: "4px",
+  boxSizing: "border-box",
+  fontSize: "0.9rem",
+};
+
+const labelStyle = { display: "block", marginBottom: "6px", fontWeight: "500", fontSize: "0.9rem" };
+
+export default function VideoPlayer({
+  videoURL,
+  videoRef,
+  currentTime,
+  duration,
+  startTime,
+  endTime,
+  volume,
+  playerVolume,
+  limitSize,
+  setLimitSize,
+  maxSizeMb,
+  setMaxSizeMb,
+  finetune,
+  setFinetune,
   handleLoadedMetadata,
   handleTimeUpdate,
   setStartTime,
   setEndTime,
-  setDuration,
-  setCurrentTime,
   setVolume,
+  removeAudio,
+  setRemoveAudio,
   setPlayerVolume,
   mode,
   setMode,
@@ -47,50 +47,14 @@ export default function VideoPlayer({
   uploadProgress,
   originalFileSize,
   previewFileSize,
-  canDownload,
+  estimatedSize,
   formatFileSize,
 }) {
   const timelineRef = useRef(null);
 
   const [mute, setMute] = useState(false);
-  const [prevVolume, setPrevVolume] = useState(1);
 
-  const [advancedSettings, setAdvancedSettings] = useState({
-    fps: 30,
-    resolution: "1280x720",
-    bitrate: 1000,
-  });
-
-  const resolutionOptions = [
-    { label: "480p", value: "854x480" },
-    { label: "720p", value: "1280x720" },
-    { label: "1080p", value: "1920x1080" },
-    { label: "1440p", value: "2560x1440" },
-    { label: "2160p (4K)", value: "3840x2160" },
-    { label: "Custom", value: "custom" },
-  ];
-
-  const presets = {
-    low: {
-      label: "LOW",
-      fps: 24,
-      resolution: "854x480",
-      bitrate: 600,
-    },
-    medium: {
-      label: "MEDIUM",
-      fps: 30,
-      resolution: "1280x720",
-      bitrate: 1200,
-    },
-    high: {
-      label: "HIGH",
-      fps: 60,
-      resolution: "1920x1080",
-      bitrate: 2500,
-    },
-  };
-
+  // Vorschau-Lautstärke ist unabhängig von der Export-Lautstärke
   useEffect(() => {
     if (videoRef.current) {
       videoRef.current.volume = mute ? 0 : playerVolume;
@@ -106,12 +70,14 @@ export default function VideoPlayer({
     }
   };
 
-  const handleLocalTimelineClick = (e) => {
+  const timeAtClientX = (clientX) => {
     const rect = timelineRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const percent = clickX / rect.width;
-    const time = duration * percent;
+    const percent = (clientX - rect.left) / rect.width;
+    return Math.max(0, Math.min(duration, percent * duration));
+  };
 
+  const handleLocalTimelineClick = (e) => {
+    const time = timeAtClientX(e.clientX);
     if (e.shiftKey) {
       setStartTime(Math.min(time, endTime));
     } else if (e.altKey) {
@@ -126,24 +92,9 @@ export default function VideoPlayer({
     setVolume(vol);
   };
 
-  const toggleMute = () => {
-    if (mute) {
-      setMute(false);
-      setPlayerVolume(prevVolume);
-    } else {
-      setMute(true);
-      setPrevVolume(playerVolume);
-    }
-  };
-
   const handleDrag = (setter) => (e) => {
-    const rect = timelineRef.current.getBoundingClientRect();
-    const move = (moveEvent) => {
-      const x = moveEvent.clientX - rect.left;
-      const percent = x / rect.width;
-      const time = Math.max(0, Math.min(duration, percent * duration));
-      setter(time);
-    };
+    e.stopPropagation();
+    const move = (moveEvent) => setter(timeAtClientX(moveEvent.clientX));
     const up = () => {
       document.removeEventListener("mousemove", move);
       document.removeEventListener("mouseup", up);
@@ -158,8 +109,12 @@ export default function VideoPlayer({
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  const currentPreset = presets[mode];
+  const updateFinetune = (key, value) => setFinetune({ ...finetune, [key]: value });
+
+  const currentPreset = PRESETS[mode];
   const isFineTune = mode === "finetune";
+  const isOriginal = mode === "original";
+  const pct = (t) => (duration > 0 ? (t / duration) * 100 : 0);
 
   return (
     <div className="p-4 space-y-4">
@@ -211,50 +166,36 @@ export default function VideoPlayer({
           className="video-player"
           controls={false}
         />
-
-        <div className="volume-overlay">
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={playerVolume}
-            onChange={(e) => setPlayerVolume(parseFloat(e.target.value))}
-          />
-        </div>
       </div>
 
       <div
         className="timeline-bar"
-        ref={(el) => {
-          progressBarRef.current = el;
-          timelineRef.current = el;
-        }}
+        ref={timelineRef}
         onClick={handleLocalTimelineClick}
       >
         <div className="timeline-background" />
         <div
           className="timeline-indicator"
-          style={{
-            left: `${(currentTime / duration) * 100}%`,
-          }}
+          style={{ left: `${pct(currentTime)}%` }}
         />
         <div
           className="timeline-range"
           style={{
-            left: `${(startTime / duration) * 100}%`,
-            width: `${((endTime - startTime) / duration) * 100}%`,
+            left: `${pct(startTime)}%`,
+            width: `${pct(endTime - startTime)}%`,
           }}
         />
         <div
           className="timeline-handle-start"
-          style={{ left: `${(startTime / duration) * 100}%` }}
+          style={{ left: `${pct(startTime)}%` }}
           onMouseDown={handleDrag(setStartTime)}
+          onClick={(e) => e.stopPropagation()}
         />
         <div
           className="timeline-handle-end"
-          style={{ left: `${(endTime / duration) * 100}%` }}
+          style={{ left: `${pct(endTime)}%` }}
           onMouseDown={handleDrag(setEndTime)}
+          onClick={(e) => e.stopPropagation()}
         />
       </div>
       <div className="timeline-time-display">
@@ -262,25 +203,46 @@ export default function VideoPlayer({
         <span>{formatTime(duration)}</span>
       </div>
 
-      {/* Audio Multiplier */}
-      <div className="flex items-center space-x-4">
-        <label>Audio Multiplier:</label>
+      {/* Audio: Vorschau betrifft nur den Player, Export nur die Ausgabedatei */}
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto auto", gap: "8px 12px", alignItems: "center" }}>
+        <strong>Vorschau</strong>
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value={playerVolume}
+          disabled={mute}
+          aria-label="Vorschau-Lautstärke"
+          onChange={(e) => setPlayerVolume(parseFloat(e.target.value))}
+        />
+        <span>{Math.round(playerVolume * 100)}%</span>
+        <label>
+          <input type="checkbox" checked={mute} onChange={() => setMute(!mute)} />
+          {" "}stumm
+        </label>
+
+        <strong>Export</strong>
         <input
           type="range"
           min="0"
           max="2"
           step="0.1"
           value={volume}
+          disabled={removeAudio}
+          aria-label="Export-Lautstärke"
           onChange={(e) => handleAudioMultiplier(parseFloat(e.target.value))}
         />
         <span>{volume.toFixed(1)}x</span>
-        <input type="checkbox" checked={mute} onChange={toggleMute} />
-        <label>Mute</label>
+        <label>
+          <input type="checkbox" checked={removeAudio} onChange={(e) => setRemoveAudio(e.target.checked)} />
+          {" "}ohne Ton
+        </label>
       </div>
 
       {/* Mode Selection Buttons */}
       <div className="flex gap-2" style={{ borderBottom: "1px solid #d1d5db", paddingBottom: "12px" }}>
-        {["low", "medium", "high", "finetune"].map((key) => (
+        {["original", "low", "medium", "high", "finetune"].map((key) => (
           <button
             key={key}
             type="button"
@@ -295,113 +257,47 @@ export default function VideoPlayer({
               cursor: "pointer",
             }}
           >
-            {key === "finetune" ? "FINETUNE" : key.toUpperCase()}
+            {key === "finetune" ? "FINETUNE" : key === "original" ? "ORIGINAL" : PRESETS[key].label}
           </button>
         ))}
       </div>
 
       {/* Settings Section */}
-      {!isFineTune ? (
-        <div className="space-y-3">
-          <div>
-            <p style={{ margin: 0, fontWeight: 600, marginBottom: "8px" }}>Preset Settings</p>
-            <p style={{ margin: 0, fontSize: "0.9rem", color: "#666" }}>
-              {currentPreset.resolution}, {currentPreset.fps} FPS, {currentPreset.bitrate} kbps
-            </p>
-            {originalFileSize && (
-              <p style={{ margin: "4px 0 0 0", fontSize: "0.9rem", color: "#22c55e" }}>
-                Originalgröße: {formatFileSize(originalFileSize)}
-              </p>
-            )}
-            {previewFileSize && (
-              <p style={{ margin: "4px 0 0 0", fontSize: "0.9rem", color: "#a78bfa" }}>
-                Ausgabegröße: {formatFileSize(previewFileSize)}
-              </p>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: "8px" }}>
-            <button
-              type="button"
-              onClick={() => handlePreview()}
-              disabled={previewing}
-              style={{
-                flex: 1,
-                padding: "10px 16px",
-                backgroundColor: previewing ? "#9ca3af" : "#7c3aed",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: previewing ? "not-allowed" : "pointer",
-                fontWeight: "600",
-              }}
-            >
-              {previewing ? "⏳ Preview..." : "Preview"}
-            </button>
-            <button
-              className="download-button"
-              type="button"
-              onClick={handleDownload}
-              disabled={previewing}
-              style={{
-                flex: 1,
-                padding: "10px 16px",
-                backgroundColor: previewing ? "#9ca3af" : "#2563eb",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: previewing ? "not-allowed" : "pointer",
-                fontWeight: "600",
-              }}
-            >
-              Download
-            </button>
-          </div>
-          {message && <p style={{ color: message.includes("Fehler") ? "red" : "green", marginTop: "10px", fontSize: "0.9rem" }}>{message}</p>}
+      {isOriginal ? (
+        <div>
+          <p style={{ margin: 0, fontWeight: 600, marginBottom: "8px" }}>Nur schneiden</p>
+          <p style={{ margin: 0, fontSize: "0.9rem", color: "#666" }}>
+            Originalqualität, fertig in Sekunden. Der Start springt auf den nächsten Keyframe davor.
+          </p>
+        </div>
+      ) : !isFineTune ? (
+        <div>
+          <p style={{ margin: 0, fontWeight: 600, marginBottom: "8px" }}>Preset Settings</p>
+          <p style={{ margin: 0, fontSize: "0.9rem", color: "#666" }}>
+            {currentPreset.resolution}, {currentPreset.fps} FPS, {currentPreset.bitrate} kbps
+          </p>
         </div>
       ) : (
         <div style={{ maxWidth: "300px", margin: "0 auto" }}>
           <div style={{ marginBottom: "12px" }}>
-            <label style={{ display: "block", marginBottom: "6px", fontWeight: "500", fontSize: "0.9rem" }}>FPS</label>
+            <label style={labelStyle}>FPS</label>
             <input
               type="number"
-              value={advancedSettings.fps}
-              onChange={(e) =>
-                setAdvancedSettings({
-                  ...advancedSettings,
-                  fps: parseInt(e.target.value, 10) || 0,
-                })
-              }
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                border: "1px solid #d1d5db",
-                borderRadius: "4px",
-                boxSizing: "border-box",
-                fontSize: "0.9rem",
-              }}
+              min="1"
+              value={finetune.fps}
+              onChange={(e) => updateFinetune("fps", parseInt(e.target.value, 10) || 0)}
+              style={inputStyle}
             />
           </div>
 
           <div style={{ marginBottom: "12px" }}>
-            <label style={{ display: "block", marginBottom: "6px", fontWeight: "500", fontSize: "0.9rem" }}>Resolution</label>
+            <label style={labelStyle}>Resolution</label>
             <select
-              value={advancedSettings.resolution}
-              onChange={(e) =>
-                setAdvancedSettings({
-                  ...advancedSettings,
-                  resolution: e.target.value,
-                })
-              }
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                border: "1px solid #d1d5db",
-                borderRadius: "4px",
-                boxSizing: "border-box",
-                fontSize: "0.9rem",
-              }}
+              value={finetune.resolution}
+              onChange={(e) => updateFinetune("resolution", e.target.value)}
+              style={inputStyle}
             >
-              {resolutionOptions.map((opt) => (
+              {RESOLUTION_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
@@ -409,71 +305,116 @@ export default function VideoPlayer({
             </select>
           </div>
 
+          {finetune.resolution === "custom" && (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>Breite</label>
+                <input
+                  type="number"
+                  min="16"
+                  value={finetune.customWidth}
+                  onChange={(e) => updateFinetune("customWidth", e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={labelStyle}>Höhe</label>
+                <input
+                  type="number"
+                  min="16"
+                  value={finetune.customHeight}
+                  onChange={(e) => updateFinetune("customHeight", e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+            </div>
+          )}
+
           <div style={{ marginBottom: "12px" }}>
-            <label style={{ display: "block", marginBottom: "6px", fontWeight: "500", fontSize: "0.9rem" }}>Bitrate (kbps)</label>
+            <label style={labelStyle}>Bitrate (kbps)</label>
             <input
               type="number"
-              value={advancedSettings.bitrate}
-              onChange={(e) =>
-                setAdvancedSettings({
-                  ...advancedSettings,
-                  bitrate: parseInt(e.target.value, 10) || 0,
-                })
-              }
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                border: "1px solid #d1d5db",
-                borderRadius: "4px",
-                boxSizing: "border-box",
-                fontSize: "0.9rem",
-              }}
+              min="1"
+              value={finetune.bitrate}
+              onChange={(e) => updateFinetune("bitrate", parseInt(e.target.value, 10) || 0)}
+              style={inputStyle}
             />
           </div>
-
-          <div style={{ display: "flex", gap: "8px" }}>
-            <button
-              type="button"
-              onClick={() => handlePreview()}
-              disabled={previewing}
-              style={{
-                flex: 1,
-                padding: "10px 12px",
-                backgroundColor: previewing ? "#9ca3af" : "#7c3aed",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: previewing ? "not-allowed" : "pointer",
-                fontWeight: "600",
-                fontSize: "0.9rem",
-              }}
-            >
-              {previewing ? "⏳ Preview..." : "Preview"}
-            </button>
-            <button
-              className="download-button"
-              type="button"
-              onClick={handleDownload}
-              disabled={!canDownload}
-              style={{
-                flex: 1,
-                padding: "10px 12px",
-                backgroundColor: !canDownload ? "#9ca3af" : "#2563eb",
-                color: "white",
-                border: "none",
-                borderRadius: "6px",
-                cursor: !canDownload ? "not-allowed" : "pointer",
-                fontWeight: "600",
-                fontSize: "0.9rem",
-              }}
-            >
-              Download
-            </button>
-          </div>
-          {message && <p style={{ color: message.includes("Fehler") ? "red" : "green", marginTop: "10px", fontSize: "0.9rem" }}>{message}</p>}
         </div>
       )}
+
+      {/* Größenlimit (nur beim Neu-Kodieren möglich) */}
+      {!isOriginal && <div className="flex items-center space-x-4">
+        <input
+          type="checkbox"
+          checked={limitSize}
+          onChange={(e) => setLimitSize(e.target.checked)}
+        />
+        <label>Max. Dateigröße</label>
+        <input
+          type="number"
+          min="1"
+          value={maxSizeMb}
+          disabled={!limitSize}
+          onChange={(e) => setMaxSizeMb(parseFloat(e.target.value) || 0)}
+          style={{ ...inputStyle, width: "90px" }}
+        />
+        <span>MB</span>
+      </div>}
+
+      {originalFileSize && (
+        <p style={{ margin: "4px 0 0 0", fontSize: "0.9rem", color: "#22c55e" }}>
+          Originalgröße: {formatFileSize(originalFileSize)}
+        </p>
+      )}
+      {previewFileSize ? (
+        <p style={{ margin: "4px 0 0 0", fontSize: "0.9rem", color: "#a78bfa" }}>
+          Ausgabegröße: {formatFileSize(previewFileSize)}
+        </p>
+      ) : estimatedSize ? (
+        <p style={{ margin: "4px 0 0 0", fontSize: "0.9rem", color: "#a78bfa" }}>
+          Ausgabegröße: ≈ {formatFileSize(estimatedSize)} (geschätzt)
+        </p>
+      ) : null}
+
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button
+          type="button"
+          onClick={() => handlePreview()}
+          disabled={previewing}
+          style={{
+            flex: 1,
+            padding: "10px 16px",
+            backgroundColor: previewing ? "#9ca3af" : "#7c3aed",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            cursor: previewing ? "not-allowed" : "pointer",
+            fontWeight: "600",
+          }}
+        >
+          {previewing ? "⏳ Preview..." : "Preview"}
+        </button>
+        <button
+          className="download-button"
+          type="button"
+          onClick={handleDownload}
+          disabled={previewing}
+          style={{
+            flex: 1,
+            padding: "10px 16px",
+            backgroundColor: previewing ? "#9ca3af" : "#2563eb",
+            color: "white",
+            border: "none",
+            borderRadius: "6px",
+            cursor: previewing ? "not-allowed" : "pointer",
+            fontWeight: "600",
+          }}
+        >
+          Download
+        </button>
+      </div>
+      {message && <p style={{ color: message.includes("Fehler") ? "red" : "green", marginTop: "10px", fontSize: "0.9rem" }}>{message}</p>}
     </div>
   );
 }
-

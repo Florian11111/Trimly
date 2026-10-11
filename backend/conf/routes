@@ -2,4 +2,4 @@ POST    /store                   video.VideoController.store
 POST    /process                 video.VideoController.process
 POST    /upload                  video.VideoController.upload
 GET     /check/:filename         video.VideoController.checkVideo(filename: String)
-GET     /download/:filename      video.VideoController.download(filename: String)
+GET     /download/:filename      video.VideoController.download(filename: String, name: Option[String])

@@ -11,6 +11,9 @@ import scala.concurrent.{Future, ExecutionContext}
 
 object VideoCalculator {
 
+  // Feste Audio-Bitrate (kbps), wird auch in FFmpegUtils gesetzt
+  val AudioBitrateKbps = 128
+
   def process(
     videoConversion: VideoConversion
   )(implicit ec: ExecutionContext): Future[Either[String, String]] = Future {
@@ -22,7 +25,13 @@ object VideoCalculator {
 
       val width = videoConversion.width.orElse(Some(info.width)).getOrElse(0)
       val height = videoConversion.height.orElse(Some(info.height)).getOrElse(0)
-      val fps = videoConversion.framerate.orElse(Some(info.fps)).getOrElse(30.0)
+
+      // Nie mehr FPS als die Quelle hat, sonst werden nur Frames dupliziert
+      val requestedFps = videoConversion.framerate.getOrElse(info.fps)
+      val fps =
+        if (info.fps > 0 && requestedFps > info.fps) info.fps
+        else if (requestedFps > 0) requestedFps
+        else 30.0
 
       val normalBitrate: Long = {
         val base = (width, height) match {
@@ -36,29 +45,46 @@ object VideoCalculator {
       }
 
       val usedBitrate = videoConversion.bitrate
-        .orElse(Some(info.streamBitRate.toLong))
+        .orElse(Some(info.streamBitRate.toLong / 1000)) // ffprobe liefert bit/s
         .filter(_ > 0)
         .map(b => Math.min(b, normalBitrate))
-        .getOrElse(normalBitrate)      
+        .getOrElse(normalBitrate)
 
-      if (videoConversion.startTime.getOrElse(0) < 0)
+      // Browser und ffprobe melden die Dauer minimal unterschiedlich -> auf Videolänge begrenzen
+      val durationMs = (info.duration * 1000).toInt
+      val startMs = videoConversion.startTime.getOrElse(0)
+      val endMs = Math.min(videoConversion.endTime.getOrElse(durationMs), durationMs)
+
+      // Größenlimit: Videobitrate so wählen, dass Video + Audio in maxSizeMb passen (5% Reserve für Container)
+      val sizeLimitedBitrate: Option[Long] = videoConversion.maxSizeMb.filter(_ > 0).map { mb =>
+        val seconds = Math.max(endMs - startMs, 1) / 1000.0
+        val totalKbps = mb * 1024 * 1024 * 8 / 1000 / seconds
+        val audioKbps = if (videoConversion.removeAudio) 0 else AudioBitrateKbps
+        (totalKbps * 0.95 - audioKbps).toLong
+      }
+      val finalBitrate = sizeLimitedBitrate.map(Math.min(usedBitrate, _)).getOrElse(usedBitrate)
+
+      if (startMs < 0)
         Left("Start time must be non-negative.")
-      else if (videoConversion.endTime.getOrElse(0) <= videoConversion.startTime.getOrElse(0))
+      else if (endMs <= startMs)
         Left("End time must be after start time.")
-      else if (videoConversion.endTime.getOrElse(0) > (info.duration * 1000).toInt)
-        Left(s"End time exceeds video duration: ${info.duration} ms.")
+      else if (sizeLimitedBitrate.exists(_ < 100))
+        Left(s"Zielgröße von ${videoConversion.maxSizeMb.get} MB ist für diese Länge zu klein.")
       else {
         val adjustedConversion = videoConversion.copy(
-          startTime = Some(videoConversion.startTime.getOrElse(0)),
-          endTime = Some(videoConversion.endTime.getOrElse(info.duration.toInt * 1000)),
-          bitrate = Some(usedBitrate),
+          startTime = Some(startMs),
+          endTime = Some(endMs),
+          bitrate = Some(finalBitrate),
           framerate = Some(fps),
           width = Some(width),
           height = Some(height),
           volume = videoConversion.volume.orElse(Some(1.0))
         )
 
-        FFmpegUtils.processVideo(adjustedConversion) match {
+        val result =
+          if (videoConversion.trimOnly) FFmpegUtils.trimVideo(adjustedConversion)
+          else FFmpegUtils.processVideo(adjustedConversion)
+        result match {
           case Left(error) => Left(error)
           case Right(msg)  => Right("Processed successfully")
         }
