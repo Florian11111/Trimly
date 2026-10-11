@@ -95,7 +95,7 @@ object FFmpegUtils {
     available
   }
 
-  private def runFfmpeg(command: Seq[String]): Either[String, String] = {
+  def run(command: Seq[String]): Either[String, String] = {
     println(s"ffmpeg befehl: $command")
     // Letzte stderr-Zeilen merken, damit Fehler im Frontend erklärt werden können
     val stderrTail = scala.collection.mutable.Queue.empty[String]
@@ -124,7 +124,7 @@ object FFmpegUtils {
       else if (volume == 1.0) Seq("-map", "0:a?", "-c:a", "copy")
       else Seq("-map", "0:a?", "-filter:a", s"volume=$volume", "-c:a", "aac", "-b:a", "192k")
 
-    runFfmpeg(Seq(
+    run(Seq(
       ffmpegPath,
       "-y",
       "-v", "error",
@@ -224,7 +224,7 @@ object FFmpegUtils {
       if (useGpu) Seq("-c:v", "h264_nvenc", "-preset", "p4", "-bf", "0")
       else Seq("-c:v", "libx264", "-preset", "veryfast")
 
-    runFfmpeg(Seq(
+    run(Seq(
       ffmpegPath,
       "-y",
       "-v", "error"

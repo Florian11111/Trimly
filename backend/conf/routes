@@ -3,3 +3,5 @@ POST    /process                 video.VideoController.process
 POST    /upload                  video.VideoController.upload
 GET     /check/:filename         video.VideoController.checkVideo(filename: String)
 GET     /download/:filename      video.VideoController.download(filename: String, name: Option[String])
+POST    /render                  video.VideoController.renderEdit
+POST    /keepalive               video.VideoController.keepAlive

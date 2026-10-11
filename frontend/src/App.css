@@ -6,6 +6,33 @@
   margin: 0 auto;
 }
 
+/* Editor braucht mehr Platz */
+.App.wide {
+  max-width: 1200px;
+}
+
+.tabs {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.tabs button {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  background: #e5e7eb;
+  color: #111827;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tabs button.active {
+  background: #2563eb;
+  color: white;
+}
+
 h1 {
   margin-bottom: 20px;
 }

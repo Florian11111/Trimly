@@ -47,6 +47,24 @@ class VideoController @Inject()(
     }
   }
 
+  // Editor-Projekt rendern (Projekt-JSON + Overlay-PNGs)
+  def renderEdit: Action[MultipartFormData[TemporaryFile]] = Action(parse.multipartFormData) { request =>
+    videoService.handleRender(request.body) match {
+      case Right(filename) =>
+        println(s"[CONTROLLER] Render gestartet: $filename")
+        Ok(Json.obj("status" -> "success", "filename" -> filename))
+      case Left(error) =>
+        println(s"[CONTROLLER] Render Fehler: $error")
+        BadRequest(Json.obj("status" -> "error", "message" -> error))
+    }
+  }
+
+  // Editor offen: Originale nicht verfallen lassen
+  def keepAlive: Action[JsValue] = Action(parse.json) { request =>
+    videoService.keepAlive((request.body \ "ids").asOpt[Seq[String]].getOrElse(Seq.empty))
+    Ok(Json.obj("status" -> "success"))
+  }
+
   // Legacy: Upload mit Datei
   def upload: Action[MultipartFormData[TemporaryFile]] = Action.async(parse.multipartFormData) { request =>
     request.body.file("video").map { video =>

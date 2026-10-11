@@ -64,3 +64,18 @@ test('preview and export audio controls are independent', () => {
   expect(screen.getByLabelText("Vorschau-Lautstärke")).toHaveValue("1");
   expect(document.querySelector("video").volume).toBe(1);
 });
+
+test('editor tab opens and hides the trim view', () => {
+  window.XMLHttpRequest = class { upload = {}; open() {} send() {} abort() {} };
+  URL.createObjectURL = jest.fn(() => 'blob:video');
+  URL.revokeObjectURL = jest.fn();
+
+  render(<App />);
+  fireEvent.drop(screen.getByText(/Ziehe eine Videodatei hierher/i).parentElement, {
+    dataTransfer: { files: [new File(['x'], 'clip.mp4', { type: 'video/mp4' })] },
+  });
+  fireEvent.click(screen.getByText(/Editor/));
+  // ohne geladene Metadaten (jsdom) zeigt der Editor einen Hinweis
+  expect(screen.getByText(/Lade zuerst ein Video/)).toBeInTheDocument();
+  expect(document.querySelector('.dropzone-wrapper')).toHaveStyle('display: none');
+});

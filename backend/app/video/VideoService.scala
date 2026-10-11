@@ -30,6 +30,7 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
 
   private val videoStatusMap  = TrieMap.empty[String, VideoStatus]
   private val originalFileMap = TrieMap.empty[String, String] // originalId -> filepath
+  private val originalLastUse = TrieMap.empty[String, Long]   // originalId -> letzte Nutzung (ms)
 
   if (!processedDir.exists()) processedDir.mkdirs()
   if (!originalsDir.exists()) originalsDir.mkdirs()
@@ -48,35 +49,49 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     val dest     = new File(originalsDir, filename)
     video.ref.moveTo(dest, replace = true)
     originalFileMap.put(id, dest.getAbsolutePath)
+    originalLastUse.put(id, System.currentTimeMillis())
     println(s"[STORE] Original gespeichert: $filename  id=$id  size=${dest.length()} bytes")
-
-    actorSystem.scheduler.scheduleOnce(1.hour) {
-      originalFileMap.remove(id)
-      if (dest.exists()) {
-        dest.delete()
-        println(s"[STORE] Original gelöscht nach 1 Stunde: $filename")
-      }
-    }
+    scheduleOriginalCleanup(id, dest)
     id
   }
+
+  // Originale 1 Stunde nach der letzten Nutzung löschen (Editor-Sitzungen können länger dauern)
+  private val OriginalRetention = 1.hour
+
+  private def scheduleOriginalCleanup(id: String, dest: File): Unit = {
+    actorSystem.scheduler.scheduleOnce(OriginalRetention) {
+      val idleMs = System.currentTimeMillis() - originalLastUse.getOrElse(id, 0L)
+      if (idleMs < OriginalRetention.toMillis) {
+        scheduleOriginalCleanup(id, dest)
+      } else {
+        originalFileMap.remove(id)
+        originalLastUse.remove(id)
+        if (dest.exists()) {
+          dest.delete()
+          println(s"[STORE] Original gelöscht nach 1 Stunde ohne Nutzung: ${dest.getName}")
+        }
+      }
+    }
+  }
+
+  // Pfad zu einem gespeicherten Original; zählt als Nutzung
+  def originalPath(id: String): Option[String] =
+    originalFileMap.get(id).filter(p => new File(p).exists()).map { p =>
+      originalLastUse.put(id, System.currentTimeMillis())
+      p
+    }
 
   // ─── Mit originalId verarbeiten ──────────────────────────────────────────
 
   def handleProcess(data: MultipartFormData[TemporaryFile], originalId: String): Future[Either[String, String]] = {
     println(s"[PROCESS] Anfrage mit originalId=$originalId")
-    originalFileMap.get(originalId) match {
+    originalPath(originalId) match {
       case None =>
         println(s"[PROCESS] Original nicht gefunden für id=$originalId")
         Future.successful(Left("Original video nicht gefunden. Bitte erneut hochladen."))
       case Some(path) =>
-        val f = new File(path)
-        if (!f.exists()) {
-          println(s"[PROCESS] Original-Datei fehlt: $path")
-          Future.successful(Left("Original-Datei fehlt. Bitte erneut hochladen."))
-        } else {
-          println(s"[PROCESS] Verarbeite Original: $path  size=${f.length()} bytes")
-          processFile(data, path, originalId)
-        }
+        println(s"[PROCESS] Verarbeite Original: $path  size=${new File(path).length()} bytes")
+        processFile(data, path, originalId)
     }
   }
 
@@ -121,13 +136,21 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
       removeAudio   = removeAudio
     )
 
+    runJob(outFilename, outPath) {
+      scala.concurrent.Await.result(VideoCalculator.process(conv), Duration.Inf)
+    }
+    Future.successful(Right(outFilename))
+  }
+
+  // Startet die Verarbeitung im Hintergrund; Status über /check abfragbar
+  private def runJob(outFilename: String, outPath: String, cleanup: () => Unit = () => ())(work: => Either[String, String]): Unit = {
     videoStatusMap.put(outFilename, Computing)
     println(s"[PROCESS] Status Computing gesetzt für $outFilename")
 
     new Thread(() => {
       try {
         println(s"[FFMPEG] Starte Verarbeitung für $outFilename ...")
-        val result = scala.concurrent.Await.result(VideoCalculator.process(conv), Duration.Inf)
+        val result = work
         result match {
           case Right(_) =>
             val size = new File(outPath).length()
@@ -147,10 +170,10 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
         case ex: Throwable =>
           println(s"[FFMPEG] Exception bei $outFilename: ${ex.getMessage}")
           markFailed(outFilename, outPath, s"Interner Fehler: ${ex.getMessage}")
+      } finally {
+        cleanup()
       }
     }).start()
-
-    Future.successful(Right(outFilename))
   }
 
   // Fehler merken, damit /check ihn melden kann; halbfertige Ausgabe löschen
@@ -160,6 +183,54 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     actorSystem.scheduler.scheduleOnce(10.minutes) {
       videoStatusMap.remove(outFilename)
     }
+  }
+
+  // ─── Editor: Projekt rendern ─────────────────────────────────────────────
+
+  def handleRender(data: MultipartFormData[TemporaryFile]): Either[String, String] = {
+    val projectJson = data.dataParts.get("project").flatMap(_.headOption)
+      .getOrElse(return Left("Projektdaten fehlen."))
+    val project = Try(play.api.libs.json.Json.parse(projectJson).as[EditProject](EditProject.projectReads))
+      .getOrElse(return Left("Projektdaten sind ungültig."))
+
+    val ids = (project.video.map(_.originalId) ++ project.audio.map(_.originalId)).distinct
+    val paths = ids.flatMap(id => originalPath(id).map(id -> _)).toMap
+    val missing = ids.filterNot(paths.contains)
+    if (missing.nonEmpty) return Left("Ein Clip ist nicht mehr auf dem Server. Bitte Video erneut hinzufügen.")
+
+    val suffix = Random.alphanumeric.take(8).mkString
+    val outFilename = s"edit_${suffix}_r.mp4"
+    val outPath = new File(processedDir, outFilename).getAbsolutePath
+
+    // Overlay-PNGs aus dem Upload in ein eigenes Verzeichnis für diesen Job
+    val overlayDir = new File(processedDir, s"overlays_$suffix")
+    overlayDir.mkdirs()
+    val overlayFiles = data.files.filter(_.key.startsWith("overlay_")).map { part =>
+      val dest = new File(overlayDir, s"${part.key.replaceAll("[^A-Za-z0-9_]", "")}.png")
+      part.ref.moveTo(dest, replace = true)
+      part.key -> dest.getAbsolutePath
+    }.toMap
+
+    EditRenderer.validate(project, overlayFiles) match {
+      case Some(error) =>
+        deleteRecursively(overlayDir)
+        Left(error)
+      case None =>
+        println(s"[EDIT] Render: ${project.video.size} Video-, ${project.audio.size} Ton-Abschnitte, " +
+          s"${project.zooms.size} Zooms, ${project.overlays.size} Overlays -> $outFilename")
+        runJob(outFilename, outPath, cleanup = () => deleteRecursively(overlayDir)) {
+          EditRenderer.render(project, paths, overlayFiles, outPath)
+        }
+        Right(outFilename)
+    }
+  }
+
+  // Hält die Originale aktiv, solange der Editor offen ist
+  def keepAlive(ids: Seq[String]): Unit = ids.foreach(originalPath)
+
+  private def deleteRecursively(dir: File): Unit = {
+    Option(dir.listFiles()).foreach(_.foreach(_.delete()))
+    dir.delete()
   }
 
   // ─── Legacy: Upload mit Datei (Fallback falls kein Store verwendet) ──────

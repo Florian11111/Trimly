@@ -1,0 +1,298 @@
+.editor {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ed-empty {
+  padding: 40px;
+  color: #6b7280;
+  border: 2px dashed #aaa;
+  border-radius: 10px;
+}
+
+.ed-top {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.ed-frame {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  user-select: none;
+}
+
+.ed-zoom {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.ed-zoom video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 0;
+  box-shadow: none;
+  display: block;
+}
+
+.ed-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.ed-side {
+  width: 230px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ed-panel {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 0.88rem;
+  min-height: 120px;
+}
+
+.ed-prop-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.ed-prop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ed-prop textarea {
+  width: 100%;
+  font-family: inherit;
+}
+
+.ed-prop input[type="range"] {
+  flex: 1;
+}
+
+.ed-hint {
+  color: #6b7280;
+  font-size: 0.82rem;
+  margin: 4px 0;
+}
+
+.ed-transport,
+.ed-toolbar,
+.ed-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ed-time {
+  font-variant-numeric: tabular-nums;
+  min-width: 110px;
+}
+
+.ed-inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: #374151;
+}
+
+.ed-btn {
+  margin: 0; /* globale button-Regel in App.css */
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: #e5e7eb;
+  color: #111827;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.ed-btn:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.ed-btn:disabled {
+  background: #e5e7eb;
+  color: #111827;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ed-btn.primary {
+  background: #2563eb;
+  color: white;
+}
+
+.ed-btn.danger {
+  background: #dc2626;
+  color: white;
+}
+
+.ed-btn.export {
+  background: #7c3aed;
+  color: white;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.ed-upload {
+  font-size: 0.85rem;
+  color: #2563eb;
+}
+
+.ed-message {
+  color: green;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.ed-message.error {
+  color: red;
+}
+
+/* ─── Timeline ─────────────────────────────────────────────────────────── */
+
+.ed-timeline {
+  overflow-x: auto;
+  background: #1f2937;
+  border-radius: 8px;
+  color: #e5e7eb;
+  font-size: 0.78rem;
+  user-select: none;
+}
+
+.tl-inner {
+  position: relative;
+  min-width: 100%;
+}
+
+.tl-row {
+  position: relative;
+  display: flex;
+  border-bottom: 1px solid #374151;
+  min-height: 34px;
+}
+
+.tl-ruler {
+  height: 22px;
+  min-height: 22px;
+  cursor: pointer;
+  background: #111827;
+}
+
+.tl-row-label {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 80px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  background: #111827;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-track {
+  position: relative;
+  flex: 1;
+  cursor: pointer;
+}
+
+.tl-tick {
+  position: absolute;
+  top: 3px;
+  padding-left: 3px;
+  border-left: 1px solid #6b7280;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+
+.tl-item {
+  position: absolute;
+  height: 24px;
+  border-radius: 4px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  cursor: grab;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.tl-item.selected {
+  outline: 2px solid #fbbf24;
+  z-index: 2;
+}
+
+.tl-item.video { background: #2563eb; }
+.tl-item.audio { background: #059669; }
+.tl-item.audio.linked { background: #065f46; cursor: pointer; }
+.tl-item.overlay { background: #b45309; }
+.tl-item.overlay.text { background: #7c3aed; }
+.tl-item.overlay.image { background: #be185d; }
+.tl-item.zoom { background: #a16207; }
+
+.tl-label {
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.tl-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.tl-edge.left { left: 0; }
+.tl-edge.right { right: 0; }
+
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #f87171;
+  pointer-events: none;
+  z-index: 4;
+}
+
+@media (max-width: 900px) {
+  .ed-top {
+    flex-direction: column;
+  }
+  .ed-frame,
+  .ed-side {
+    width: 100%;
+  }
+}

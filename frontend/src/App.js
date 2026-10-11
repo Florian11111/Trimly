@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import "./App.css";
 import VideoPlayer from "./VideoPlayer";
+import Editor from "./editor/Editor";
 import { PRESETS, DEFAULT_FINETUNE } from "./presets";
 
 const API = process.env.REACT_APP_API_URL !== undefined
@@ -37,6 +38,8 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState(null);
   const [previewedSettings, setPreviewedSettings] = useState(null);
   const [storedOriginalId, setStoredOriginalId] = useState(null);
+  const [tab, setTab] = useState("trim"); // "trim" | "edit"
+  const [editorOpened, setEditorOpened] = useState(false);
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
   const uploadXhrRef = useRef(null);
@@ -135,6 +138,8 @@ function App() {
     uploadXhrRef.current = null;
     if (videoURL) URL.revokeObjectURL(videoURL);
     setVideoURL(null);
+    setTab("trim");
+    setEditorOpened(false);
     setStartTime(0);
     setEndTime(0);
     setDuration(0);
@@ -337,7 +342,7 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (!videoURL) return;
+      if (!videoURL || tab !== "trim") return;
       // Tastenkürzel nicht auslösen, während in Eingabefeldern getippt wird
       if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && e.target.type !== "range" && e.target.type !== "checkbox") return;
       if (e.code === "Space") { e.preventDefault(); togglePlayPause(); }
@@ -377,9 +382,28 @@ function App() {
     if (duration > 0 && endTime <= startTime) setEndTime(Math.min(duration, startTime + 1));
   }, [startTime, endTime, duration]);
 
+  const switchTab = (next) => {
+    if (next === "edit") {
+      videoRef.current?.pause();
+      setEditorOpened(true);
+    }
+    setTab(next);
+  };
+
   return (
-    <div className="App">
+    <div className={`App ${tab === "edit" ? "wide" : ""}`}>
       <h1>🎬 Video Upload & Trim</h1>
+
+      {videoURL && (
+        <div className="tabs">
+          <button type="button" className={tab === "trim" ? "active" : ""} onClick={() => switchTab("trim")}>
+            ✂ Schneiden
+          </button>
+          <button type="button" className={tab === "edit" ? "active" : ""} onClick={() => switchTab("edit")}>
+            🎞 Editor
+          </button>
+        </div>
+      )}
 
       <input
         type="file"
@@ -389,7 +413,8 @@ function App() {
         onChange={handleFileChange}
       />
 
-      <div className="dropzone-wrapper">
+      {/* Schneiden-Tab bleibt beim Tabwechsel erhalten (Marker, Player-Zustand) */}
+      <div className="dropzone-wrapper" style={{ display: tab === "trim" ? undefined : "none" }}>
         {message && !videoURL && (
           <p style={{ color: message.includes("Fehler") ? "red" : "green", marginBottom: "10px" }}>
             {message}
@@ -453,6 +478,20 @@ function App() {
           </div>
         </div>
       </div>
+
+      {videoURL && editorOpened && (
+        <div style={{ display: tab === "edit" ? undefined : "none" }}>
+          <Editor
+            key={videoURL}
+            api={API}
+            active={tab === "edit"}
+            mainClip={duration > 0
+              ? { url: videoURL, name: originalFileName, duration, originalId: storedOriginalId }
+              : null}
+            formatFileSize={formatFileSize}
+          />
+        </div>
+      )}
     </div>
   );
 }
