@@ -86,6 +86,17 @@ class VideoCalculatorFixesSpec extends AnyFunSuite {
       "-read_intervals", "%+#1", "-of", "csv=p=0", file.getAbsolutePath).!!.trim
   }
 
+  test("audioOnly produces an mp3 with only an audio stream") {
+    val out = File.createTempFile("calc_audio", ".mp3")
+    val result = Await.result(VideoCalculator.process(conversion(out, 3000).copy(audioOnly = true)), 2.minutes)
+    assert(result.isRight, result)
+    val audio = probe(out, "stream=codec_name", "a")
+    val video = probe(out, "stream=codec_type", "v")
+    out.delete()
+    assert(audio == "mp3", audio)
+    assert(video.isEmpty, video)
+  }
+
   test("removeAudio produces a file without audio stream") {
     val out = File.createTempFile("noaudio", ".mp4")
     val result = Await.result(VideoCalculator.process(conversion(out, 3000).copy(removeAudio = true)), 2.minutes)

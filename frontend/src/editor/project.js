@@ -8,7 +8,8 @@
 //   zooms:     [{ id, start, end, x, y, w }]
 // }
 
-export const MIN_LEN = 0.1;
+// Kürzester Abschnitt in Sekunden (Backend erlaubt ab 0.005)
+export const MIN_LEN = 0.01;
 
 let nextId = 1;
 export const newId = (prefix) => `${prefix}${Date.now().toString(36)}_${nextId++}`;
@@ -148,8 +149,8 @@ export function dragPatch(kind, mode, orig, dt, ctx) {
 }
 
 // Projekt für POST /render. Liefert auch die Overlays, die als overlay_<i>.png mitgeschickt werden müssen
-// (Einträge hinter dem Videoende fallen weg).
-export function buildRenderProject(project, preset, originalIds) {
+// (Einträge hinter dem Videoende fallen weg, beim reinen Ton-Export bleibt die ganze Tonspur).
+export function buildRenderProject(project, preset, originalIds, output = "both") {
   const total = totalDuration(project);
   const originalId = (clipId) => originalIds[clipId];
   const inRange = (x) => x.start < total - MIN_LEN;
@@ -158,10 +159,16 @@ export function buildRenderProject(project, preset, originalIds) {
     preset: { width: preset.width, height: preset.height, fps: preset.fps, bitrate: preset.bitrate },
     video: project.videoSegs.map(s => ({ originalId: originalId(s.clipId), start: s.srcStart, end: s.srcEnd })),
     audio: effectiveAudio(project)
-      .filter(s => s.tlStart < total)
+      .filter(s => output === "audio" || s.tlStart < total)
       .map(s => ({ originalId: originalId(s.clipId), start: s.srcStart, end: s.srcEnd, at: s.tlStart, volume: s.volume })),
     zooms: project.zooms.filter(inRange).map(({ start, end, x, y, w }) => ({ start, end: Math.min(end, total), x, y, w })),
     overlays: overlays.map((o, i) => ({ file: `overlay_${i}`, start: o.start, end: Math.min(o.end, total) })),
+    output,
   };
   return { body, overlays };
+}
+
+// Länge der Tonspur (Ende des letzten Ton-Abschnitts)
+export function audioDuration(project) {
+  return Math.max(0, ...effectiveAudio(project).map(s => s.tlStart + s.srcEnd - s.srcStart));
 }

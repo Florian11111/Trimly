@@ -95,6 +95,14 @@ object FFmpegUtils {
     available
   }
 
+  def hasAudio(path: String): Boolean = Try {
+    Seq(ffprobePath, "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+      "-of", "csv=p=0", path).!!.trim.nonEmpty
+  }.getOrElse(false)
+
+  // Bitrate für reine Audio-Exporte (MP3)
+  val AudioOnlyBitrateKbps = 192
+
   def run(command: Seq[String]): Either[String, String] = {
     println(s"ffmpeg befehl: $command")
     // Letzte stderr-Zeilen merken, damit Fehler im Frontend erklärt werden können
@@ -136,6 +144,31 @@ object FFmpegUtils {
     ) ++ audioArgs ++ Seq(
       "-avoid_negative_ts", "make_zero",
       "-f", "mp4",
+      videoConversion.filePathReady
+    ))
+  }
+
+  // Nur die Tonspur des Ausschnitts als MP3
+  def extractAudio(videoConversion: VideoConversion): Either[String, String] = {
+    val startSeconds = videoConversion.startTime.getOrElse(0) / 1000.0
+    val endSeconds = videoConversion.endTime.getOrElse(0) / 1000.0
+    val volume = videoConversion.volume.getOrElse(1.0)
+    if (volume < 0) return Left("Volume must be a non-negative number.")
+    if (!hasAudio(videoConversion.filePath)) return Left("Das Video hat keine Tonspur.")
+
+    run(Seq(
+      ffmpegPath,
+      "-y",
+      "-v", "error",
+      "-ss", startSeconds.toString,
+      "-to", endSeconds.toString,
+      "-i", videoConversion.filePath,
+      "-map", "0:a:0",
+      "-vn",
+      "-filter:a", s"volume=$volume",
+      "-c:a", "libmp3lame",
+      "-b:a", s"${AudioOnlyBitrateKbps}k",
+      "-f", "mp3",
       videoConversion.filePathReady
     ))
   }

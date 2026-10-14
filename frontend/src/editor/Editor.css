@@ -130,6 +130,15 @@
   cursor: pointer;
 }
 
+.ed-select {
+  padding: 5px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  color: #111827;
+  font-size: 0.9rem;
+}
+
 .ed-btn:hover:not(:disabled) {
   filter: brightness(0.92);
 }
@@ -207,7 +216,8 @@
   position: sticky;
   left: 0;
   z-index: 3;
-  width: 80px;
+  width: 80px; /* = LABEL_W in Timeline.js, Playhead und Klicks rechnen damit */
+  box-sizing: border-box;
   flex-shrink: 0;
   padding: 0 8px;
   display: flex;

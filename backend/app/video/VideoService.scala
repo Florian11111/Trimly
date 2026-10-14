@@ -83,15 +83,16 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
 
   // ─── Mit originalId verarbeiten ──────────────────────────────────────────
 
-  def handleProcess(data: MultipartFormData[TemporaryFile], originalId: String): Future[Either[String, String]] = {
+  // Left(None) = Original nicht (mehr) vorhanden, Left(Some(fehler)) = sonstiger Fehler
+  def handleProcess(data: MultipartFormData[TemporaryFile], originalId: String): Future[Either[Option[String], String]] = {
     println(s"[PROCESS] Anfrage mit originalId=$originalId")
     originalPath(originalId) match {
       case None =>
         println(s"[PROCESS] Original nicht gefunden für id=$originalId")
-        Future.successful(Left("Original video nicht gefunden. Bitte erneut hochladen."))
+        Future.successful(Left(None))
       case Some(path) =>
         println(s"[PROCESS] Verarbeite Original: $path  size=${new File(path).length()} bytes")
-        processFile(data, path, originalId)
+        processFile(data, path, originalId).map(_.left.map(Some(_)))
     }
   }
 
@@ -112,13 +113,16 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     val bitrate = data.dataParts.get("bitrate").flatMap(_.headOption).flatMap(s => Try(s.toLong).toOption)
     // mode=original: nur schneiden, Auflösung/Bitrate/Größenlimit werden ignoriert
     val trimOnly = data.dataParts.get("mode").flatMap(_.headOption).contains("original")
-    val removeAudio = data.dataParts.get("removeAudio").flatMap(_.headOption).contains("true")
+    // output: "both" (Standard), "video" (ohne Ton) oder "audio" (nur Ton als MP3)
+    val output = data.dataParts.get("output").flatMap(_.headOption).getOrElse("both")
+    val audioOnly = output == "audio"
+    val removeAudio = output == "video" || data.dataParts.get("removeAudio").flatMap(_.headOption).contains("true")
 
     val suffix       = Random.alphanumeric.take(8).mkString
-    val outFilename  = s"${baseName}_${suffix}_r.mp4"
+    val outFilename  = s"${baseName}_${suffix}_r.${if (audioOnly) "mp3" else "mp4"}"
     val outPath      = new File(processedDir, outFilename).getAbsolutePath
 
-    println(s"[PROCESS] Settings: start=$startTime end=$endTime vol=$volume fps=$framerate bitrate=$bitrate res=${width}x${height} maxSize=$maxSizeMb trimOnly=$trimOnly removeAudio=$removeAudio")
+    println(s"[PROCESS] Settings: start=$startTime end=$endTime vol=$volume fps=$framerate bitrate=$bitrate res=${width}x${height} maxSize=$maxSizeMb trimOnly=$trimOnly output=$output")
     println(s"[PROCESS] Output: $outPath")
 
     val conv = VideoConversion(
@@ -133,7 +137,8 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
       volume        = Some(volume),
       maxSizeMb     = if (trimOnly) None else maxSizeMb,
       trimOnly      = trimOnly,
-      removeAudio   = removeAudio
+      removeAudio   = removeAudio,
+      audioOnly     = audioOnly
     )
 
     runJob(outFilename, outPath) {
@@ -187,19 +192,20 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
 
   // ─── Editor: Projekt rendern ─────────────────────────────────────────────
 
-  def handleRender(data: MultipartFormData[TemporaryFile]): Either[String, String] = {
+  // Left((fehler, fehlende originalIds)) bei Fehler
+  def handleRender(data: MultipartFormData[TemporaryFile]): Either[(String, Seq[String]), String] = {
     val projectJson = data.dataParts.get("project").flatMap(_.headOption)
-      .getOrElse(return Left("Projektdaten fehlen."))
+      .getOrElse(return Left(("Projektdaten fehlen.", Nil)))
     val project = Try(play.api.libs.json.Json.parse(projectJson).as[EditProject](EditProject.projectReads))
-      .getOrElse(return Left("Projektdaten sind ungültig."))
+      .getOrElse(return Left(("Projektdaten sind ungültig.", Nil)))
 
     val ids = (project.video.map(_.originalId) ++ project.audio.map(_.originalId)).distinct
     val paths = ids.flatMap(id => originalPath(id).map(id -> _)).toMap
     val missing = ids.filterNot(paths.contains)
-    if (missing.nonEmpty) return Left("Ein Clip ist nicht mehr auf dem Server. Bitte Video erneut hinzufügen.")
+    if (missing.nonEmpty) return Left(("Ein Clip ist nicht mehr auf dem Server. Bitte Video erneut hinzufügen.", missing))
 
     val suffix = Random.alphanumeric.take(8).mkString
-    val outFilename = s"edit_${suffix}_r.mp4"
+    val outFilename = s"edit_${suffix}_r.${if (project.output == "audio") "mp3" else "mp4"}"
     val outPath = new File(processedDir, outFilename).getAbsolutePath
 
     // Overlay-PNGs aus dem Upload in ein eigenes Verzeichnis für diesen Job
@@ -214,10 +220,10 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     EditRenderer.validate(project, overlayFiles) match {
       case Some(error) =>
         deleteRecursively(overlayDir)
-        Left(error)
+        Left((error, Nil))
       case None =>
         println(s"[EDIT] Render: ${project.video.size} Video-, ${project.audio.size} Ton-Abschnitte, " +
-          s"${project.zooms.size} Zooms, ${project.overlays.size} Overlays -> $outFilename")
+          s"${project.zooms.size} Zooms, ${project.overlays.size} Overlays, output=${project.output} -> $outFilename")
         runJob(outFilename, outPath, cleanup = () => deleteRecursively(overlayDir)) {
           EditRenderer.render(project, paths, overlayFiles, outPath)
         }

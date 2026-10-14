@@ -41,7 +41,7 @@ test('drag patches respect clip and project bounds', () => {
   expect(P.dragPatch('video', 'end', seg, 5, { clipDuration: 10 })).toEqual({ srcEnd: 10 });
   const ov = { start: 7, end: 9 };
   expect(P.dragPatch('overlay', 'move', ov, 5, { total: 10 })).toEqual({ start: 8, end: 10 });
-  expect(P.dragPatch('overlay', 'start', ov, 5, { total: 10 }).start).toBeCloseTo(8.9);
+  expect(P.dragPatch('overlay', 'start', ov, 5, { total: 10 }).start).toBeCloseTo(9 - P.MIN_LEN);
 });
 
 test('adding a clip appends video and (if detached) audio', () => {
@@ -77,4 +77,18 @@ test('zoomAt ramps in and out like the backend expression', () => {
   expect(mid.x).toBeCloseTo(0.5);
   expect(mid.y).toBeCloseTo(0.5);
   expect(zoomAt(zooms, 1.15).z).toBeCloseTo(1.5);
+});
+
+test('audio-only export keeps detached audio that lies behind the video end', () => {
+  // Ton getrennt, dann Video auf 1 s gekürzt: Ton bleibt bei 0..10 s, Ton-Abschnitt ab 4 s
+  let p = P.detachAudio(base());
+  p = P.updateItem(p, 'video', p.videoSegs[0].id, { srcEnd: 1 });
+  p = P.updateItem(p, 'audio', p.audioSegs[0].id, { srcStart: 4, tlStart: 4 });
+  const preset = { width: 1280, height: 720, fps: 30, bitrate: 2500 };
+  const ids = { main: 'srvA' };
+  expect(P.buildRenderProject(p, preset, ids).body.audio).toEqual([]);
+  const { body } = P.buildRenderProject(p, preset, ids, 'audio');
+  expect(body.output).toBe('audio');
+  expect(body.audio).toEqual([{ originalId: 'srvA', start: 4, end: 10, at: 4, volume: 1 }]);
+  expect(P.audioDuration(p)).toBe(10);
 });

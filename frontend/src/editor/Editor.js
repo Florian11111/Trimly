@@ -5,8 +5,9 @@ import { PRESETS } from "../presets";
 import * as P from "./project";
 import { drawOverlay, overlayBox, hitOverlay, hitZoom, zoomAt, isVisible, renderOverlayPng } from "./overlays";
 
-// Muss zu VideoCalculator.AudioBitrateKbps im Backend passen
+// Muss zu VideoCalculator.AudioBitrateKbps bzw. FFmpegUtils.AudioOnlyBitrateKbps im Backend passen
 const AUDIO_KBPS = 128;
+const AUDIO_ONLY_KBPS = 192;
 const EXPORT_PRESETS = ["low", "medium", "high"];
 const FRAME_ASPECT = 16 / 9;
 const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".mov", ".webm", ".avi"];
@@ -21,7 +22,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const isTyping = (e) =>
   ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && !["range", "checkbox"].includes(e.target.type);
 
-export default function Editor({ api, mainClip, active, formatFileSize }) {
+export default function Editor({ api, mainClip, ensureMainOriginal, active, formatFileSize }) {
   const [project, setProject] = useState(P.emptyProject);
   const [originalIds, setOriginalIds] = useState({}); // clipId -> Server-ID (nicht im Undo-Verlauf)
   const [uploads, setUploads] = useState({});          // clipId -> Upload-Fortschritt in %
@@ -30,6 +31,7 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
   const [playing, setPlaying] = useState(false);
   const [previewVolume, setPreviewVolume] = useState(1);
   const [exportPreset, setExportPreset] = useState("medium");
+  const [exportOutput, setExportOutput] = useState("both"); // "both" | "video" | "audio"
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState("");
   const [timelineZoom, setTimelineZoom] = useState(1);
@@ -53,6 +55,7 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
   const dragOrigRef = useRef(null);
   const videoInputRef = useRef(null);
   const imageInputRef = useRef(null);
+  const clipUploadsRef = useRef({}); // clipId -> { file, promise } für erneutes Hochladen
 
   previewVolumeRef.current = previewVolume;
 
@@ -86,9 +89,11 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
     if (!mainClip || !mainClip.duration || Object.keys(projectRef.current.clips).length) return;
     setProjectNow(P.addClip(P.emptyProject(), "main", { url: mainClip.url, name: mainClip.name, duration: mainClip.duration }));
   }, [mainClip, setProjectNow]);
+  // Server-ID des Hauptvideos kann sich ändern, wenn der Schneiden-Tab es neu hochlädt
+  const mainOriginalId = mainClip?.originalId;
   useEffect(() => {
-    if (mainClip?.originalId) setOriginalIds(ids => (ids.main ? ids : { ...ids, main: mainClip.originalId }));
-  }, [mainClip]);
+    if (mainOriginalId) setOriginalIds(ids => (ids.main === mainOriginalId ? ids : { ...ids, main: mainOriginalId }));
+  }, [mainOriginalId]);
 
   const total = P.totalDuration(project);
   const videoLayout = useMemo(() => P.layoutVideo(project.videoSegs), [project.videoSegs]);
@@ -160,6 +165,19 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
     }
   }, []);
 
+  // Timeline-Zeit des gerade angezeigten Videobilds, falls das Video im Abschnitt zur Zeit t läuft
+  const videoTimelineTime = (t) => {
+    const v = videoRef.current;
+    if (!v || v.paused || v.seeking || v.readyState < 2) return null;
+    const p = projectRef.current;
+    const seg = P.layoutVideo(p.videoSegs).find(s => t >= s.tlStart && t < s.tlStart + s.len);
+    if (!seg || p.clips[seg.clipId]?.url !== loadedUrlRef.current) return null;
+    const vt = seg.tlStart + (v.currentTime - seg.srcStart);
+    // Video steht noch am Ende des vorigen Abschnitts o.ä. -> Uhr behalten, syncMedia korrigiert
+    if (vt < seg.tlStart || vt >= seg.tlStart + seg.len || Math.abs(vt - t) > 0.25) return null;
+    return vt;
+  };
+
   const onVideoLoaded = () => {
     const v = videoRef.current;
     if (pendingSeekRef.current !== null) {
@@ -187,6 +205,12 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
     const tick = () => {
       const tot = P.totalDuration(projectRef.current);
       let t = clockRef.current.t0 + (performance.now() - clockRef.current.start) / 1000;
+      // Läuft das Video im aktuellen Abschnitt, gibt es den Takt vor: Playhead (und damit „S“) = sichtbares Bild
+      const vt = videoTimelineTime(t);
+      if (vt !== null) {
+        t = vt;
+        clockRef.current = { start: performance.now(), t0: vt };
+      }
       const done = t >= tot;
       if (done) t = tot;
       timeRef.current = t;
@@ -391,30 +415,53 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
 
   // ─── Werkzeuge ───────────────────────────────────────────────────────────
 
+  // Lädt einen Clip hoch; Promise liefert die Server-ID
   const uploadClip = (file, clipId) => {
     setUploads(u => ({ ...u, [clipId]: 0 }));
-    const formData = new FormData();
-    formData.append("video", file);
-    const xhr = new XMLHttpRequest();
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) setUploads(u => ({ ...u, [clipId]: Math.round((e.loaded / e.total) * 100) }));
-    };
-    xhr.onload = () => {
-      setUploads(u => { const { [clipId]: _, ...rest } = u; return rest; });
+    const done = () => setUploads(u => { const { [clipId]: _, ...rest } = u; return rest; });
+    const promise = new Promise((resolve, reject) => {
+      const formData = new FormData();
+      formData.append("video", file);
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) setUploads(u => ({ ...u, [clipId]: Math.round((e.loaded / e.total) * 100) }));
+      };
+      xhr.onload = () => {
+        done();
+        let result;
+        try {
+          result = JSON.parse(xhr.responseText);
+        } catch {
+          return reject(new Error(`HTTP ${xhr.status}`));
+        }
+        if (result.status !== "success") return reject(new Error(result.message));
+        setOriginalIds(ids => ({ ...ids, [clipId]: result.originalId }));
+        resolve(result.originalId);
+      };
+      xhr.onerror = () => {
+        done();
+        reject(new Error("Server nicht erreichbar."));
+      };
+      xhr.open("POST", `${api}/store`);
+      xhr.send(formData);
+    });
+    clipUploadsRef.current[clipId] = { file, promise };
+    return promise;
+  };
+
+  // Server-ID eines Clips; wartet auf laufenden Upload oder lädt (erneut) hoch
+  const ensureClipOriginal = async (clipId, forceNew = false) => {
+    if (clipId === "main") return ensureMainOriginal(forceNew);
+    const entry = clipUploadsRef.current[clipId];
+    if (!entry) throw new Error("Clip ist nicht auf dem Server. Bitte erneut hinzufügen.");
+    if (!forceNew) {
       try {
-        const result = JSON.parse(xhr.responseText);
-        if (result.status === "success") setOriginalIds(ids => ({ ...ids, [clipId]: result.originalId }));
-        else setMessage("Fehler beim Hochladen: " + result.message);
+        return await entry.promise;
       } catch {
-        setMessage(`Fehler beim Hochladen (HTTP ${xhr.status})`);
+        // fehlgeschlagen -> neu hochladen
       }
-    };
-    xhr.onerror = () => {
-      setUploads(u => { const { [clipId]: _, ...rest } = u; return rest; });
-      setMessage("Fehler beim Hochladen: Server nicht erreichbar.");
-    };
-    xhr.open("POST", `${api}/store`);
-    xhr.send(formData);
+    }
+    return uploadClip(entry.file, clipId);
   };
 
   const addClipFile = (file) => {
@@ -425,7 +472,7 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
     probe.onloadedmetadata = () => {
       const clipId = P.newId("c");
       commit(p => P.addClip(p, clipId, { url, name: file.name, duration: probe.duration }));
-      uploadClip(file, clipId);
+      uploadClip(file, clipId).catch(err => setMessage("Fehler beim Hochladen: " + err.message + " Wird beim Export erneut versucht."));
       setMessage(`Clip „${file.name}“ hinzugefügt.`);
     };
     probe.onerror = () => setMessage("Fehler: Video konnte nicht gelesen werden.");
@@ -486,7 +533,8 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
   // Teilt den ausgewählten Ton-Abschnitt, sonst die Videospur am Playhead
   const split = () => {
     const p = projectRef.current;
-    const next = selected?.kind === "audio" ? P.splitAudioAt(p, selected.id, time) : P.splitVideoAt(p, time);
+    const t = timeRef.current;
+    const next = selected?.kind === "audio" ? P.splitAudioAt(p, selected.id, t) : P.splitVideoAt(p, t);
     if (next === p) {
       setMessage(selected?.kind === "audio"
         ? "Der ausgewählte Ton-Abschnitt liegt nicht unter dem Playhead."
@@ -538,28 +586,63 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
 
   // ─── Export ──────────────────────────────────────────────────────────────
 
-  const pendingUploads = Object.keys(project.clips).filter(id => !originalIds[id]);
-  const estimatedBytes = (exportDims.bitrate + (audio.length ? AUDIO_KBPS : 0)) * 1000 / 8 * total;
+  // Ton, der erst hinter dem Videoende beginnt, landet nicht im Video
+  const audioInVideo = audio.some(s => s.tlStart < total);
+  const estimatedBytes = exportOutput === "audio"
+    ? AUDIO_ONLY_KBPS * 1000 / 8 * P.audioDuration(project)
+    : (exportDims.bitrate + (audioInVideo && exportOutput === "both" ? AUDIO_KBPS : 0)) * 1000 / 8 * total;
 
   const handleExport = async () => {
-    if (pendingUploads.length) {
-      setMessage("Bitte warten, bis alle Clips hochgeladen sind.");
+    if (exportOutput === "audio" && !audio.length) {
+      setMessage("Fehler: Das Projekt hat keinen Ton.");
       return;
     }
     setPlaying(false);
     setExporting(true);
-    setMessage("Overlays werden vorbereitet...");
     try {
-      const { body, overlays } = P.buildRenderProject(project, exportDims, originalIds);
-      const formData = new FormData();
-      formData.append("project", JSON.stringify(body));
-      for (let i = 0; i < overlays.length; i++) {
-        const blob = await renderOverlayPng(overlays[i], exportDims.width, exportDims.height, imagesRef.current);
-        formData.append(`overlay_${i}`, blob, `overlay_${i}.png`);
+      // Alle Clips müssen auf dem Server sein (wartet auf laufende Uploads, wiederholt fehlgeschlagene)
+      const clipIds = Object.keys(project.clips);
+      const ensureAll = async (forceIds = []) => {
+        if (clipIds.some(id => forceIds.includes(id) || !originalIds[id])) setMessage("Clips werden hochgeladen...");
+        const ids = {};
+        for (const id of clipIds) ids[id] = await ensureClipOriginal(id, forceIds.includes(id));
+        return ids;
+      };
+      let ids;
+      try {
+        ids = await ensureAll();
+      } catch (err) {
+        setMessage("Fehler beim Hochladen: " + err.message);
+        return;
       }
-      setMessage("Video wird gerendert...");
-      const res = await fetch(`${api}/render`, { method: "POST", body: formData });
-      const result = await res.json();
+
+      setMessage("Overlays werden vorbereitet...");
+      const { body, overlays } = P.buildRenderProject(project, exportDims, ids, exportOutput);
+      const overlayBlobs = [];
+      for (let i = 0; i < overlays.length; i++) {
+        overlayBlobs.push(await renderOverlayPng(overlays[i], exportDims.width, exportDims.height, imagesRef.current));
+      }
+      const render = async (renderBody) => {
+        const formData = new FormData();
+        formData.append("project", JSON.stringify(renderBody));
+        overlayBlobs.forEach((blob, i) => formData.append(`overlay_${i}`, blob, `overlay_${i}.png`));
+        return (await fetch(`${api}/render`, { method: "POST", body: formData })).json();
+      };
+
+      setMessage(exportOutput === "audio" ? "Ton wird exportiert..." : "Video wird gerendert...");
+      let result = await render(body);
+      // Server kennt Clips nicht mehr (abgelaufen / neu gestartet): neu hochladen, nochmal versuchen
+      if (result.status !== "success" && result.missing?.length) {
+        const forceIds = clipIds.filter(id => result.missing.includes(ids[id]));
+        try {
+          ids = await ensureAll(forceIds);
+        } catch (err) {
+          setMessage("Fehler beim Hochladen: " + err.message);
+          return;
+        }
+        setMessage(exportOutput === "audio" ? "Ton wird exportiert..." : "Video wird gerendert...");
+        result = await render(P.buildRenderProject(project, exportDims, ids, exportOutput).body);
+      }
       if (result.status !== "success") {
         setMessage("Fehler: " + result.message);
         return;
@@ -576,7 +659,8 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
         if (d.status === "ready") {
           const base = (mainClip?.name || "video").replace(/\.[^.]+$/, "");
           const a = document.createElement("a");
-          a.href = `${api}/download/${encodeURIComponent(filename)}?name=${encodeURIComponent(`${base}_edit.mp4`)}`;
+          const ext = filename.endsWith(".mp3") ? "mp3" : "mp4";
+          a.href = `${api}/download/${encodeURIComponent(filename)}?name=${encodeURIComponent(`${base}_edit.${ext}`)}`;
           document.body.appendChild(a);
           a.click();
           a.remove();
@@ -768,19 +852,30 @@ export default function Editor({ api, mainClip, active, formatFileSize }) {
 
       <div className="ed-export">
         <strong>Export</strong>
-        {EXPORT_PRESETS.map(key => (
+        <select className="ed-select" value={exportOutput} aria-label="Ausgabe"
+          onChange={(e) => setExportOutput(e.target.value)}>
+          <option value="both">Video + Audio</option>
+          <option value="video">Nur Video</option>
+          <option value="audio">Nur Audio (MP3)</option>
+        </select>
+        {exportOutput !== "audio" && EXPORT_PRESETS.map(key => (
           <button key={key} type="button" className={`ed-btn ${exportPreset === key ? "primary" : ""}`}
             onClick={() => setExportPreset(key)}>
             {PRESETS[key].label}
           </button>
         ))}
         <span className="ed-hint">
-          {PRESETS[exportPreset].resolution}, {PRESETS[exportPreset].fps} FPS · ≈ {formatFileSize(estimatedBytes)}
+          {exportOutput === "audio"
+            ? "MP3, 192 kbps"
+            : `${PRESETS[exportPreset].resolution}, ${PRESETS[exportPreset].fps} FPS`} · ≈ {formatFileSize(estimatedBytes)}
         </span>
         <button type="button" className="ed-btn export" onClick={handleExport} disabled={exporting || total < 0.1}>
           {exporting ? "⏳ Exportiere..." : "⬇ Exportieren"}
         </button>
       </div>
+      {exportOutput === "both" && audio.length > 0 && !audioInVideo && (
+        <p className="ed-message error">⚠ Der Ton liegt komplett hinter dem Videoende – das Video wäre stumm. Ton auf der Timeline nach vorne ziehen oder „Nur Audio“ wählen.</p>
+      )}
       {message && <p className={`ed-message ${message.includes("Fehler") ? "error" : ""}`}>{message}</p>}
     </div>
   );

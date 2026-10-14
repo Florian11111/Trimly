@@ -22,10 +22,6 @@ export default function VideoPlayer({
   endTime,
   volume,
   playerVolume,
-  limitSize,
-  setLimitSize,
-  maxSizeMb,
-  setMaxSizeMb,
   finetune,
   setFinetune,
   handleLoadedMetadata,
@@ -33,8 +29,8 @@ export default function VideoPlayer({
   setStartTime,
   setEndTime,
   setVolume,
-  removeAudio,
-  setRemoveAudio,
+  output,
+  setOutput,
   setPlayerVolume,
   mode,
   setMode,
@@ -229,138 +225,137 @@ export default function VideoPlayer({
           max="2"
           step="0.1"
           value={volume}
-          disabled={removeAudio}
+          disabled={output === "video"}
           aria-label="Export-Lautstärke"
           onChange={(e) => handleAudioMultiplier(parseFloat(e.target.value))}
         />
         <span>{volume.toFixed(1)}x</span>
-        <label>
-          <input type="checkbox" checked={removeAudio} onChange={(e) => setRemoveAudio(e.target.checked)} />
-          {" "}ohne Ton
-        </label>
+        <select
+          value={output}
+          aria-label="Ausgabe"
+          onChange={(e) => setOutput(e.target.value)}
+          style={{ ...inputStyle, width: "auto", padding: "4px 6px" }}
+        >
+          <option value="both">Video + Audio</option>
+          <option value="video">Nur Video</option>
+          <option value="audio">Nur Audio (MP3)</option>
+        </select>
       </div>
 
-      {/* Mode Selection Buttons */}
-      <div className="flex gap-2" style={{ borderBottom: "1px solid #d1d5db", paddingBottom: "12px" }}>
-        {["original", "low", "medium", "high", "finetune"].map((key) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => { setMode(key); setMessage(""); }}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "6px",
-              border: "none",
-              backgroundColor: mode === key ? "#2563eb" : "#e5e7eb",
-              color: mode === key ? "white" : "#111827",
-              fontWeight: "500",
-              cursor: "pointer",
-            }}
-          >
-            {key === "finetune" ? "FINETUNE" : key === "original" ? "ORIGINAL" : PRESETS[key].label}
-          </button>
-        ))}
-      </div>
-
-      {/* Settings Section */}
-      {isOriginal ? (
+      {/* Nur Audio: Video-Einstellungen spielen keine Rolle */}
+      {output === "audio" ? (
         <div>
-          <p style={{ margin: 0, fontWeight: 600, marginBottom: "8px" }}>Nur schneiden</p>
+          <p style={{ margin: 0, fontWeight: 600, marginBottom: "8px" }}>Nur Audio</p>
           <p style={{ margin: 0, fontSize: "0.9rem", color: "#666" }}>
-            Originalqualität, fertig in Sekunden. Der Start springt auf den nächsten Keyframe davor.
-          </p>
-        </div>
-      ) : !isFineTune ? (
-        <div>
-          <p style={{ margin: 0, fontWeight: 600, marginBottom: "8px" }}>Preset Settings</p>
-          <p style={{ margin: 0, fontSize: "0.9rem", color: "#666" }}>
-            {currentPreset.resolution}, {currentPreset.fps} FPS, {currentPreset.bitrate} kbps
+            Tonspur des Ausschnitts als MP3, 192 kbps.
           </p>
         </div>
       ) : (
-        <div style={{ maxWidth: "300px", margin: "0 auto" }}>
-          <div style={{ marginBottom: "12px" }}>
-            <label style={labelStyle}>FPS</label>
-            <input
-              type="number"
-              min="1"
-              value={finetune.fps}
-              onChange={(e) => updateFinetune("fps", parseInt(e.target.value, 10) || 0)}
-              style={inputStyle}
-            />
+        <>
+          {/* Mode Selection Buttons */}
+          <div className="flex gap-2" style={{ borderBottom: "1px solid #d1d5db", paddingBottom: "12px" }}>
+            {["original", "low", "medium", "high", "finetune"].map((key) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => { setMode(key); setMessage(""); }}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "6px",
+                  border: "none",
+                  backgroundColor: mode === key ? "#2563eb" : "#e5e7eb",
+                  color: mode === key ? "white" : "#111827",
+                  fontWeight: "500",
+                  cursor: "pointer",
+                }}
+              >
+                {key === "finetune" ? "FINETUNE" : key === "original" ? "ORIGINAL" : PRESETS[key].label}
+              </button>
+            ))}
           </div>
 
-          <div style={{ marginBottom: "12px" }}>
-            <label style={labelStyle}>Resolution</label>
-            <select
-              value={finetune.resolution}
-              onChange={(e) => updateFinetune("resolution", e.target.value)}
-              style={inputStyle}
-            >
-              {RESOLUTION_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {finetune.resolution === "custom" && (
-            <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-              <div style={{ flex: 1 }}>
-                <label style={labelStyle}>Breite</label>
+          {/* Settings Section */}
+          {isOriginal ? (
+            <div>
+              <p style={{ margin: 0, fontWeight: 600, marginBottom: "8px" }}>Nur schneiden</p>
+              <p style={{ margin: 0, fontSize: "0.9rem", color: "#666" }}>
+                Originalqualität, fertig in Sekunden. Der Start springt auf den nächsten Keyframe davor.
+              </p>
+            </div>
+          ) : !isFineTune ? (
+            <div>
+              <p style={{ margin: 0, fontWeight: 600, marginBottom: "8px" }}>Preset Settings</p>
+              <p style={{ margin: 0, fontSize: "0.9rem", color: "#666" }}>
+                {currentPreset.resolution}, {currentPreset.fps} FPS, {currentPreset.bitrate} kbps
+              </p>
+            </div>
+          ) : (
+            <div style={{ maxWidth: "300px", margin: "0 auto" }}>
+              <div style={{ marginBottom: "12px" }}>
+                <label style={labelStyle}>FPS</label>
                 <input
                   type="number"
-                  min="16"
-                  value={finetune.customWidth}
-                  onChange={(e) => updateFinetune("customWidth", e.target.value)}
+                  min="1"
+                  value={finetune.fps}
+                  onChange={(e) => updateFinetune("fps", parseInt(e.target.value, 10) || 0)}
                   style={inputStyle}
                 />
               </div>
-              <div style={{ flex: 1 }}>
-                <label style={labelStyle}>Höhe</label>
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={labelStyle}>Resolution</label>
+                <select
+                  value={finetune.resolution}
+                  onChange={(e) => updateFinetune("resolution", e.target.value)}
+                  style={inputStyle}
+                >
+                  {RESOLUTION_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {finetune.resolution === "custom" && (
+                <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelStyle}>Breite</label>
+                    <input
+                      type="number"
+                      min="16"
+                      value={finetune.customWidth}
+                      onChange={(e) => updateFinetune("customWidth", e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelStyle}>Höhe</label>
+                    <input
+                      type="number"
+                      min="16"
+                      value={finetune.customHeight}
+                      onChange={(e) => updateFinetune("customHeight", e.target.value)}
+                      style={inputStyle}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginBottom: "12px" }}>
+                <label style={labelStyle}>Bitrate (kbps)</label>
                 <input
                   type="number"
-                  min="16"
-                  value={finetune.customHeight}
-                  onChange={(e) => updateFinetune("customHeight", e.target.value)}
+                  min="1"
+                  value={finetune.bitrate}
+                  onChange={(e) => updateFinetune("bitrate", parseInt(e.target.value, 10) || 0)}
                   style={inputStyle}
                 />
               </div>
             </div>
           )}
-
-          <div style={{ marginBottom: "12px" }}>
-            <label style={labelStyle}>Bitrate (kbps)</label>
-            <input
-              type="number"
-              min="1"
-              value={finetune.bitrate}
-              onChange={(e) => updateFinetune("bitrate", parseInt(e.target.value, 10) || 0)}
-              style={inputStyle}
-            />
-          </div>
-        </div>
+        </>
       )}
-
-      {/* Größenlimit (nur beim Neu-Kodieren möglich) */}
-      {!isOriginal && <div className="flex items-center space-x-4">
-        <input
-          type="checkbox"
-          checked={limitSize}
-          onChange={(e) => setLimitSize(e.target.checked)}
-        />
-        <label>Max. Dateigröße</label>
-        <input
-          type="number"
-          min="1"
-          value={maxSizeMb}
-          disabled={!limitSize}
-          onChange={(e) => setMaxSizeMb(parseFloat(e.target.value) || 0)}
-          style={{ ...inputStyle, width: "90px" }}
-        />
-        <span>MB</span>
-      </div>}
 
       {originalFileSize && (
         <p style={{ margin: "4px 0 0 0", fontSize: "0.9rem", color: "#22c55e" }}>

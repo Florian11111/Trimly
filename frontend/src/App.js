@@ -9,12 +9,13 @@ const API = process.env.REACT_APP_API_URL !== undefined
   : "http://localhost:9000";         // Dev: kein Build, kein Env gesetzt
 
 // Mindestlänge des Ausschnitts in Sekunden
-const MIN_CLIP = 0.1;
+const MIN_CLIP = 0.01;
 
 const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".mov", ".webm", ".avi"];
 
-// Muss zu VideoCalculator.AudioBitrateKbps im Backend passen
+// Muss zu VideoCalculator.AudioBitrateKbps bzw. FFmpegUtils.AudioOnlyBitrateKbps im Backend passen
 const AUDIO_KBPS = 128;
+const AUDIO_ONLY_KBPS = 192;
 
 function App() {
   const [videoURL, setVideoURL] = useState(null);
@@ -23,10 +24,8 @@ function App() {
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(1.0);
-  const [removeAudio, setRemoveAudio] = useState(false);
+  const [output, setOutput] = useState("both"); // "both" | "video" (ohne Ton) | "audio" (nur Ton)
   const [playerVolume, setPlayerVolume] = useState(1.0);
-  const [limitSize, setLimitSize] = useState(false);
-  const [maxSizeMb, setMaxSizeMb] = useState(100);
   const [finetune, setFinetune] = useState(DEFAULT_FINETUNE);
   const [mode, setMode] = useState("medium");
   const [message, setMessage] = useState("");
@@ -43,6 +42,10 @@ function App() {
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
   const uploadXhrRef = useRef(null);
+  // Ausgewählte Datei bleibt erhalten, damit sie bei Bedarf erneut hochgeladen werden kann
+  const fileRef = useRef(null);
+  const uploadPromiseRef = useRef(null);
+  const originalIdRef = useRef(null);
 
   const formatFileSize = (bytes) => {
     if (!bytes) return "0 B";
@@ -80,7 +83,6 @@ function App() {
       setMessage("Fehler: Bitte eine Videodatei auswählen.");
       return;
     }
-    uploadXhrRef.current?.abort();
     if (videoURL) URL.revokeObjectURL(videoURL);
 
     setOriginalFileName(file.name);
@@ -92,43 +94,82 @@ function App() {
     setPreviewFileSize(null);
     setCurrentUploadFilename(null);
     setPreviewedSettings(null);
+    fileRef.current = file;
+    const uploadingMessage = "Video wird hochgeladen...";
+    setMessage(uploadingMessage);
+    uploadOriginal(file)
+      .then(() => setMessage(m => (m === uploadingMessage ? "" : m)))
+      .catch(err => {
+        if (err.name !== "AbortError") setMessage("Fehler beim Hochladen: " + err.message + " Wird bei Preview/Download erneut versucht.");
+      });
+  };
+
+  // Lädt das Original hoch; Promise liefert die Server-ID
+  const uploadOriginal = (file) => {
+    uploadXhrRef.current?.abort();
+    originalIdRef.current = null;
     setStoredOriginalId(null);
-    setMessage("Video wird hochgeladen...");
     setUploadProgress(0);
 
-    const formData = new FormData();
-    formData.append("video", file);
     const xhr = new XMLHttpRequest();
     uploadXhrRef.current = xhr;
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
-    };
-    xhr.onload = () => {
-      uploadXhrRef.current = null;
-      setUploadProgress(null);
-      if (xhr.status === 413) {
-        setMessage("Fehler beim Hochladen: Datei ist zu groß für den Server.");
-        return;
-      }
-      try {
-        const result = JSON.parse(xhr.responseText);
-        if (result.status === "success") {
-          setStoredOriginalId(result.originalId);
-          setMessage("");
-        } else {
-          setMessage("Fehler beim Hochladen: " + result.message);
+    const isCurrent = () => uploadXhrRef.current === xhr;
+    const promise = new Promise((resolve, reject) => {
+      const fail = (msg, name) => {
+        if (isCurrent()) {
+          uploadXhrRef.current = null;
+          uploadPromiseRef.current = null;
+          setUploadProgress(null);
         }
-      } catch {
-        setMessage(`Fehler beim Hochladen (HTTP ${xhr.status})`);
-      }
-    };
-    xhr.onerror = () => {
-      uploadXhrRef.current = null;
-      setUploadProgress(null);
-      setMessage("Fehler beim Hochladen: Server nicht erreichbar.");
-    };
+        const err = new Error(msg);
+        if (name) err.name = name;
+        reject(err);
+      };
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && isCurrent()) setUploadProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        if (xhr.status === 413) return fail("Datei ist zu groß für den Server.");
+        let result;
+        try {
+          result = JSON.parse(xhr.responseText);
+        } catch {
+          return fail(`HTTP ${xhr.status}`);
+        }
+        if (result.status !== "success") return fail(result.message);
+        if (isCurrent()) {
+          uploadXhrRef.current = null;
+          setUploadProgress(null);
+          originalIdRef.current = result.originalId;
+          setStoredOriginalId(result.originalId);
+        }
+        resolve(result.originalId);
+      };
+      xhr.onerror = () => fail("Server nicht erreichbar.");
+      xhr.onabort = () => fail("Upload abgebrochen.", "AbortError");
+    });
+    uploadPromiseRef.current = promise;
+    const formData = new FormData();
+    formData.append("video", file);
     xhr.open("POST", `${API}/store`);
     xhr.send(formData);
+    return promise;
+  };
+
+  // Server-ID des Originals; wartet auf einen laufenden Upload oder lädt (erneut) hoch.
+  // forceNew: Server kennt die ID nicht mehr (abgelaufen / neu gestartet)
+  const ensureOriginal = async (forceNew = false) => {
+    if (!forceNew && originalIdRef.current) return originalIdRef.current;
+    if (!forceNew && uploadPromiseRef.current) {
+      try {
+        return await uploadPromiseRef.current;
+      } catch (err) {
+        if (err.name === "AbortError") throw err;
+        // fehlgeschlagen -> unten neu versuchen
+      }
+    }
+    if (!fileRef.current) throw new Error("Video ist nicht auf dem Server. Bitte erneut auswählen.");
+    return uploadOriginal(fileRef.current);
   };
 
   const handleFileChange = (e) => loadFile(e.target.files[0]);
@@ -136,6 +177,9 @@ function App() {
   const handleReset = () => {
     uploadXhrRef.current?.abort();
     uploadXhrRef.current = null;
+    uploadPromiseRef.current = null;
+    originalIdRef.current = null;
+    fileRef.current = null;
     if (videoURL) URL.revokeObjectURL(videoURL);
     setVideoURL(null);
     setTab("trim");
@@ -145,7 +189,7 @@ function App() {
     setDuration(0);
     setCurrentTime(0);
     setVolume(1.0);
-    setRemoveAudio(false);
+    setOutput("both");
     setPlayerVolume(1.0);
     setMode("medium");
     setMessage("");
@@ -166,7 +210,7 @@ function App() {
         startMs: Math.floor(startTime * 1000),
         endMs: Math.floor(endTime * 1000),
         volume,
-        removeAudio,
+        output,
       };
     }
     let fps, resolution, bitrate;
@@ -184,44 +228,42 @@ function App() {
       startMs: Math.floor(startTime * 1000),
       endMs: Math.floor(endTime * 1000),
       volume,
-      removeAudio,
+      output,
       fps,
       resolution,
       bitrate,
-      maxSizeMb: limitSize ? maxSizeMb : null,
     };
   };
 
   const validateSettings = (s) => {
-    if (s.mode === "original") return null;
+    if (s.mode === "original" || s.output === "audio") return null;
     const [w, h] = s.resolution.split("x").map(Number);
     if (!(w >= 16 && h >= 16)) return "Bitte gültige Breite und Höhe angeben.";
     if (!(s.fps > 0)) return "Bitte gültige FPS angeben.";
     if (!(s.bitrate > 0)) return "Bitte gültige Bitrate angeben.";
-    if (s.maxSizeMb !== null && !(s.maxSizeMb > 0)) return "Bitte gültige Maximalgröße angeben.";
     return null;
   };
 
-  const buildFormData = (s) => {
+  const buildFormData = (s, originalId) => {
     const formData = new FormData();
-    formData.append("originalId", storedOriginalId);
+    formData.append("originalId", originalId);
     formData.append("mode", s.mode);
     formData.append("startTime", s.startMs);
     formData.append("endTime", s.endMs);
     formData.append("volume", s.volume);
-    formData.append("removeAudio", s.removeAudio);
+    formData.append("output", s.output);
     if (s.mode === "original") return formData;
     formData.append("framerate", s.fps);
     formData.append("bitrate", s.bitrate);
     formData.append("resolution", s.resolution);
-    if (s.maxSizeMb !== null) formData.append("maxSizeMb", s.maxSizeMb);
     return formData;
   };
 
   // Direkter Download-Link: der Browser streamt die Datei auf die Platte statt sie im RAM zu halten
   const doDownload = (filename) => {
     const nameParts = originalFileName.split(".");
-    const ext = nameParts.length > 1 ? nameParts.pop() : "mp4";
+    const origExt = nameParts.length > 1 ? nameParts.pop() : "mp4";
+    const ext = filename.endsWith(".mp3") ? "mp3" : origExt;
     const downloadName = `${nameParts.join(".")}_trim.${ext}`;
     const a = document.createElement("a");
     a.href = `${API}/download/${encodeURIComponent(filename)}?name=${encodeURIComponent(downloadName)}`;
@@ -234,12 +276,6 @@ function App() {
 
   // Verarbeitet Video mit aktuellen Settings, speichert temporär
   const handlePreview = async (autoDownload = false) => {
-    if (!storedOriginalId) {
-      setMessage(uploadProgress !== null
-        ? "Video wird noch hochgeladen, bitte kurz warten..."
-        : "Fehler: Video ist nicht auf dem Server. Bitte erneut auswählen.");
-      return;
-    }
     const settings = getSettings();
     const invalid = validateSettings(settings);
     if (invalid) {
@@ -250,11 +286,32 @@ function App() {
     setPreviewing(true);
     setPreviewFileSize(null);
     setCurrentUploadFilename(null);
-    setMessage(autoDownload ? "Verarbeitung läuft, Download startet danach..." : "Verarbeitung läuft...");
+    const processingMessage = autoDownload ? "Verarbeitung läuft, Download startet danach..." : "Verarbeitung läuft...";
 
     try {
-      const res = await fetch(`${API}/process`, { method: "POST", body: buildFormData(settings) });
-      const result = await res.json();
+      let originalId;
+      try {
+        if (!originalIdRef.current) setMessage("Video wird hochgeladen, Verarbeitung startet danach...");
+        originalId = await ensureOriginal();
+      } catch (err) {
+        setMessage("Fehler beim Hochladen: " + err.message);
+        return;
+      }
+      setMessage(processingMessage);
+      const process = (id) => fetch(`${API}/process`, { method: "POST", body: buildFormData(settings, id) });
+      let result = await (await process(originalId)).json();
+      // Server kennt das Original nicht mehr (abgelaufen / neu gestartet): neu hochladen, nochmal versuchen
+      if (result.status === "missing") {
+        setMessage("Video ist nicht mehr auf dem Server, wird erneut hochgeladen...");
+        try {
+          originalId = await ensureOriginal(true);
+        } catch (err) {
+          setMessage("Fehler beim Hochladen: " + err.message);
+          return;
+        }
+        setMessage(processingMessage);
+        result = await (await process(originalId)).json();
+      }
 
       if (result.status !== "success") {
         setMessage("Fehler: " + result.message);
@@ -286,7 +343,7 @@ function App() {
           return;
         }
         if (d.status === "unknown") {
-          setMessage("Fehler: Verarbeitungsauftrag unbekannt (Server neu gestartet?). Bitte Video erneut auswählen.");
+          setMessage("Fehler: Verarbeitungsauftrag unbekannt (Server neu gestartet?). Bitte nochmal versuchen.");
           return;
         }
       }
@@ -307,11 +364,10 @@ function App() {
   const estimateSize = () => {
     const seconds = Math.max(0, endTime - startTime);
     if (!duration || !originalFileSize || !seconds) return null;
+    if (output === "audio") return AUDIO_ONLY_KBPS * 1000 / 8 * seconds;
     if (mode === "original") return originalFileSize * (seconds / duration);
     const s = getSettings();
-    let bytes = (s.bitrate + (removeAudio ? 0 : AUDIO_KBPS)) * 1000 / 8 * seconds;
-    if (s.maxSizeMb) bytes = Math.min(bytes, s.maxSizeMb * 1024 * 1024);
-    return bytes;
+    return (s.bitrate + (output === "video" ? 0 : AUDIO_KBPS)) * 1000 / 8 * seconds;
   };
 
   // Download: direkt wenn Preview gültig, sonst Preview → Download
@@ -350,8 +406,10 @@ function App() {
       else if (e.code === "Comma") { e.preventDefault(); skipTime(-1 / 30); }
       if (e.code === "ArrowRight") { e.preventDefault(); skipTime(5); }
       else if (e.code === "ArrowLeft") { e.preventDefault(); skipTime(-5); }
-      if (e.code === "KeyS") updateStartTime(currentTime);
-      else if (e.code === "KeyE") updateEndTime(currentTime);
+      // Exakte Position direkt vom Video (currentTime-State kommt per timeupdate nur ~4x pro Sekunde)
+      const now = videoRef.current ? videoRef.current.currentTime : currentTime;
+      if (e.code === "KeyS") updateStartTime(now);
+      else if (e.code === "KeyE") updateEndTime(now);
       if (e.code === "ArrowUp") { e.preventDefault(); changeVolume(0.05); }
       else if (e.code === "ArrowDown") { e.preventDefault(); changeVolume(-0.05); }
     };
@@ -376,6 +434,28 @@ function App() {
   const handleTimeUpdate = () => {
     setCurrentTime(videoRef.current.currentTime);
   };
+
+  // Beim Abspielen Playhead pro Frame aktualisieren (timeupdate allein ist zu grob)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    let raf = null;
+    const tick = () => {
+      setCurrentTime(video.currentTime);
+      raf = requestAnimationFrame(tick);
+    };
+    const onPlay = () => { if (raf === null) raf = requestAnimationFrame(tick); };
+    const onStop = () => { if (raf !== null) cancelAnimationFrame(raf); raf = null; };
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onStop);
+    video.addEventListener("ended", onStop);
+    return () => {
+      onStop();
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onStop);
+      video.removeEventListener("ended", onStop);
+    };
+  }, [videoURL]);
 
   // Ende immer hinter dem Start halten
   useEffect(() => {
@@ -438,10 +518,6 @@ function App() {
               endTime={endTime}
               volume={volume}
               playerVolume={playerVolume}
-              limitSize={limitSize}
-              setLimitSize={setLimitSize}
-              maxSizeMb={maxSizeMb}
-              setMaxSizeMb={setMaxSizeMb}
               finetune={finetune}
               setFinetune={setFinetune}
               handlePreview={handlePreview}
@@ -454,8 +530,8 @@ function App() {
               setStartTime={updateStartTime}
               setEndTime={updateEndTime}
               setVolume={setVolume}
-              removeAudio={removeAudio}
-              setRemoveAudio={setRemoveAudio}
+              output={output}
+              setOutput={setOutput}
               setPlayerVolume={setPlayerVolume}
               mode={mode}
               setMode={setMode}
@@ -488,6 +564,7 @@ function App() {
             mainClip={duration > 0
               ? { url: videoURL, name: originalFileName, duration, originalId: storedOriginalId }
               : null}
+            ensureMainOriginal={ensureOriginal}
             formatFileSize={formatFileSize}
           />
         </div>

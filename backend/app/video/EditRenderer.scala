@@ -21,7 +21,8 @@ case class EditProject(
   video: Seq[EditVideoSeg],
   audio: Seq[EditAudioSeg],
   zooms: Seq[EditZoom],
-  overlays: Seq[EditOverlay]
+  overlays: Seq[EditOverlay],
+  output: String = "both" // "both", "video" (ohne Ton) oder "audio" (nur Ton als MP3)
 )
 
 object EditProject {
@@ -30,7 +31,7 @@ object EditProject {
   implicit val audioReads: Reads[EditAudioSeg] = Json.reads[EditAudioSeg]
   implicit val zoomReads: Reads[EditZoom] = Json.reads[EditZoom]
   implicit val overlayReads: Reads[EditOverlay] = Json.reads[EditOverlay]
-  implicit val projectReads: Reads[EditProject] = Json.reads[EditProject]
+  implicit val projectReads: Reads[EditProject] = Json.using[Json.WithDefaultValues].reads[EditProject]
 }
 
 object EditRenderer {
@@ -42,16 +43,11 @@ object EditRenderer {
   private def num(d: Double): String =
     BigDecimal(d).setScale(4, BigDecimal.RoundingMode.HALF_UP).bigDecimal.stripTrailingZeros.toPlainString
 
-  def hasAudio(path: String): Boolean = Try {
-    Seq("ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
-      "-of", "csv=p=0", path).!!.trim.nonEmpty
-  }.getOrElse(false)
-
   def validate(p: EditProject, overlayFiles: Map[String, String]): Option[String] = {
     val total = p.video.map(s => s.end - s.start).sum
     if (p.video.isEmpty) Some("Die Videospur ist leer.")
-    else if (p.video.exists(s => s.start < 0 || s.end - s.start < 0.05)) Some("Ungültiger Video-Abschnitt.")
-    else if (p.audio.exists(s => s.start < 0 || s.end - s.start < 0.05 || s.at < 0 || s.volume < 0))
+    else if (p.video.exists(s => s.start < 0 || s.end - s.start < 0.005)) Some("Ungültiger Video-Abschnitt.")
+    else if (p.audio.exists(s => s.start < 0 || s.end - s.start < 0.005 || s.at < 0 || s.volume < 0))
       Some("Ungültiger Ton-Abschnitt.")
     else if (p.zooms.exists(z => z.end <= z.start || z.w <= 0 || z.w > 1 || z.x < 0 || z.y < 0 || z.x + z.w > 1.001 || z.y + z.w > 1.001))
       Some("Ungültiger Zoom-Bereich.")
@@ -60,6 +56,7 @@ object EditRenderer {
     else if (p.preset.width < 16 || p.preset.height < 16 || p.preset.fps <= 0 || p.preset.bitrate <= 0)
       Some("Ungültige Export-Einstellungen.")
     else if (total > 6 * 3600) Some("Projekt ist zu lang.")
+    else if (!Set("both", "video", "audio").contains(p.output)) Some("Ungültiges Ausgabeformat.")
     else None
   }
 
@@ -120,18 +117,9 @@ object EditRenderer {
     filters += s"${current}format=yuv420p[vout]"
 
     // Tonspur: Abschnitte mit Versatz auf eine stille Grundspur in Videolänge mischen
-    val audioSegs = p.audio.filter(s => s.at < total && audioAvailable(paths(s.originalId)))
-    val audioLabels = audioSegs.zipWithIndex.map { case (seg, i) =>
-      val idx = addInput("-ss", num(seg.start), "-t", num(seg.end - seg.start), "-i", paths(seg.originalId))
-      val delayMs = Math.round(seg.at * 1000)
-      filters += s"[$idx:a:0]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS," +
-        s"volume=${num(seg.volume)},adelay=$delayMs:all=1[a$i]"
-      s"[a$i]"
-    }
-    if (audioLabels.nonEmpty) {
-      filters += s"anullsrc=r=48000:cl=stereo,atrim=duration=${num(total)}[abase]"
-      filters += s"[abase]${audioLabels.mkString}amix=inputs=${audioLabels.size + 1}:duration=first:normalize=0[aout]"
-    }
+    val audioLabels =
+      if (p.output == "video") Nil
+      else addAudio(p, paths, total, audioAvailable, args => addInput(args: _*), filters)
 
     val encoderArgs =
       if (useGpu) Seq("-c:v", "h264_nvenc", "-preset", "p4", "-bf", "0")
@@ -143,6 +131,49 @@ object EditRenderer {
     Seq("ffmpeg", "-y", "-v", "error") ++ inputs.result() ++
       Seq("-filter_complex", filters.result().mkString(";"), "-map", "[vout]") ++ audioOut ++
       encoderArgs ++ Seq("-b:v", s"${p.preset.bitrate}k", "-t", num(total), "-movflags", "+faststart", "-f", "mp4", outPath)
+  }
+
+  /** Nur Ton: ganze Tonspur des Projekts als MP3 (auch Ton hinter dem Videoende). None, wenn das Projekt keinen Ton hat. */
+  def buildAudioCommand(
+    p: EditProject,
+    paths: Map[String, String],
+    audioAvailable: String => Boolean,
+    outPath: String
+  ): Option[Seq[String]] = {
+    val total = p.audio.map(s => s.at + s.end - s.start).maxOption.getOrElse(0.0)
+    val inputs = Seq.newBuilder[String]
+    val filters = Seq.newBuilder[String]
+    var inputIndex = 0
+    def addInput(args: String*): Int = { inputs ++= args; inputIndex += 1; inputIndex - 1 }
+
+    if (addAudio(p, paths, total, audioAvailable, args => addInput(args: _*), filters).isEmpty) None
+    else Some(Seq("ffmpeg", "-y", "-v", "error") ++ inputs.result() ++
+      Seq("-filter_complex", filters.result().mkString(";"), "-map", "[aout]",
+        "-c:a", "libmp3lame", "-b:a", s"${FFmpegUtils.AudioOnlyBitrateKbps}k", "-t", num(total), "-f", "mp3", outPath))
+  }
+
+  // Fügt die Ton-Eingänge und den Mix [aout] hinzu; liefert die Labels der Abschnitte (leer = kein Ton)
+  private def addAudio(
+    p: EditProject,
+    paths: Map[String, String],
+    total: Double,
+    audioAvailable: String => Boolean,
+    addInput: Seq[String] => Int,
+    filters: scala.collection.mutable.Builder[String, Seq[String]]
+  ): Seq[String] = {
+    val audioSegs = p.audio.filter(s => s.at < total && audioAvailable(paths(s.originalId)))
+    val audioLabels = audioSegs.zipWithIndex.map { case (seg, i) =>
+      val idx = addInput(Seq("-ss", num(seg.start), "-t", num(seg.end - seg.start), "-i", paths(seg.originalId)))
+      val delayMs = Math.round(seg.at * 1000)
+      filters += s"[$idx:a:0]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS," +
+        s"volume=${num(seg.volume)},adelay=$delayMs:all=1[a$i]"
+      s"[a$i]"
+    }
+    if (audioLabels.nonEmpty) {
+      filters += s"anullsrc=r=48000:cl=stereo,atrim=duration=${num(total)}[abase]"
+      filters += s"[abase]${audioLabels.mkString}amix=inputs=${audioLabels.size + 1}:duration=first:normalize=0[aout]"
+    }
+    audioLabels
   }
 
   def render(
@@ -157,7 +188,14 @@ object EditRenderer {
     }
     val sourceFps = paths.values.toSeq.distinct.flatMap(path => FFmpegUtils.getVideoInfo(path).toOption.map(_.fps)).maxOption.getOrElse(0.0)
     val audioCache = scala.collection.mutable.Map.empty[String, Boolean]
-    val audioAvailable = (path: String) => audioCache.getOrElseUpdate(path, hasAudio(path))
+    val audioAvailable = (path: String) => audioCache.getOrElseUpdate(path, FFmpegUtils.hasAudio(path))
+
+    if (p.output == "audio") {
+      return buildAudioCommand(p, paths, audioAvailable, outPath) match {
+        case Some(cmd) => FFmpegUtils.run(cmd)
+        case None => Left("Das Projekt hat keinen Ton.")
+      }
+    }
 
     def run(useGpu: Boolean) =
       FFmpegUtils.run(buildCommand(p, paths, overlayFiles, sourceFps, audioAvailable, outPath, useGpu))

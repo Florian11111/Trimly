@@ -37,7 +37,10 @@ class VideoController @Inject()(
           case Right(filename) =>
             println(s"[CONTROLLER] Process gestartet: $filename")
             Ok(Json.obj("status" -> "success", "filename" -> filename))
-          case Left(error) =>
+          case Left(None) =>
+            // Frontend lädt das Original dann automatisch neu hoch
+            NotFound(Json.obj("status" -> "missing", "message" -> "Original video nicht gefunden. Bitte erneut hochladen."))
+          case Left(Some(error)) =>
             println(s"[CONTROLLER] Process Fehler: $error")
             BadRequest(Json.obj("status" -> "error", "message" -> error))
         }
@@ -53,9 +56,9 @@ class VideoController @Inject()(
       case Right(filename) =>
         println(s"[CONTROLLER] Render gestartet: $filename")
         Ok(Json.obj("status" -> "success", "filename" -> filename))
-      case Left(error) =>
+      case Left((error, missing)) =>
         println(s"[CONTROLLER] Render Fehler: $error")
-        BadRequest(Json.obj("status" -> "error", "message" -> error))
+        BadRequest(Json.obj("status" -> "error", "message" -> error, "missing" -> missing))
     }
   }
 

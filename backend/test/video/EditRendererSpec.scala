@@ -66,6 +66,57 @@ class EditRendererSpec extends AnyFunSuite {
     out.delete()
   }
 
+  test("output=audio renders the mixed audio track as mp3") {
+    val out = File.createTempFile("edit_audio", ".mp3")
+    val project = EditProject(preset, Seq(EditVideoSeg("a", 0, 2)), Seq(EditAudioSeg("a", 0, 2, at = 0, volume = 1)),
+      Seq.empty, Seq.empty, output = "audio")
+    val result = EditRenderer.render(project, paths, Map.empty, out.getAbsolutePath)
+    assert(result.isRight, result)
+    assert(probe(out, "-show_entries", "stream=codec_type", "-of", "csv=p=0") == "audio")
+    out.delete()
+  }
+
+  test("output=audio keeps audio that lies behind the video end") {
+    val out = File.createTempFile("edit_audio_late", ".mp3")
+    val project = EditProject(preset, Seq(EditVideoSeg("a", 0, 0.5)), Seq(EditAudioSeg("a", 3, 5, at = 3, volume = 1)),
+      Seq.empty, Seq.empty, output = "audio")
+    val result = EditRenderer.render(project, paths, Map.empty, out.getAbsolutePath)
+    assert(result.isRight, result)
+    val dur = probe(out, "-show_entries", "format=duration", "-of", "csv=p=0").toDouble
+    assert(dur > 4.5 && dur < 5.5, dur)
+    out.delete()
+  }
+
+  test("output=audio without audio segments fails") {
+    val out = File.createTempFile("edit_audio_empty", ".mp3")
+    val project = EditProject(preset, Seq(EditVideoSeg("a", 0, 1)), Seq.empty, Seq.empty, Seq.empty, output = "audio")
+    assert(EditRenderer.render(project, paths, Map.empty, out.getAbsolutePath).isLeft)
+    out.delete()
+  }
+
+  test("output=video drops the audio track") {
+    val out = File.createTempFile("edit_video", ".mp4")
+    val project = EditProject(preset, Seq(EditVideoSeg("a", 0, 1)), Seq(EditAudioSeg("a", 0, 1, at = 0, volume = 1)),
+      Seq.empty, Seq.empty, output = "video")
+    val result = EditRenderer.render(project, paths, Map.empty, out.getAbsolutePath)
+    assert(result.isRight, result)
+    assert(probe(out, "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0").isEmpty)
+    out.delete()
+  }
+
+  test("very short segments (shorter than a frame) still render") {
+    val out = File.createTempFile("edit_short", ".mp4")
+    val project = EditProject(preset,
+      Seq(EditVideoSeg("a", 1, 1.02), EditVideoSeg("a", 2, 2.5), EditVideoSeg("a", 3, 3.015)),
+      Seq(EditAudioSeg("a", 1, 1.02, at = 0, volume = 1), EditAudioSeg("a", 2, 2.5, at = 0.02, volume = 1)),
+      Seq.empty, Seq.empty)
+    val result = EditRenderer.render(project, paths, Map.empty, out.getAbsolutePath)
+    assert(result.isRight, result)
+    val dur = probe(out, "-show_entries", "format=duration", "-of", "csv=p=0").toDouble
+    assert(dur > 0.4 && dur < 0.7, dur)
+    out.delete()
+  }
+
   test("validate rejects broken projects") {
     val ok = EditProject(preset, Seq(EditVideoSeg("a", 0, 1)), Seq.empty, Seq.empty, Seq.empty)
     assert(EditRenderer.validate(ok, Map.empty).isEmpty)
@@ -83,5 +134,6 @@ class EditRendererSpec extends AnyFunSuite {
     val parsed = play.api.libs.json.Json.parse(json).as[EditProject](EditProject.projectReads)
     assert(parsed.video.head.end == 1.5)
     assert(parsed.zooms.head.w == 0.5)
+    assert(parsed.output == "both")
   }
 }

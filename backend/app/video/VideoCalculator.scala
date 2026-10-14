@@ -56,7 +56,7 @@ object VideoCalculator {
       val endMs = Math.min(videoConversion.endTime.getOrElse(durationMs), durationMs)
 
       // Größenlimit: Videobitrate so wählen, dass Video + Audio in maxSizeMb passen (5% Reserve für Container)
-      val sizeLimitedBitrate: Option[Long] = videoConversion.maxSizeMb.filter(_ > 0).map { mb =>
+      val sizeLimitedBitrate: Option[Long] = videoConversion.maxSizeMb.filter(_ > 0 && !videoConversion.audioOnly).map { mb =>
         val seconds = Math.max(endMs - startMs, 1) / 1000.0
         val totalKbps = mb * 1024 * 1024 * 8 / 1000 / seconds
         val audioKbps = if (videoConversion.removeAudio) 0 else AudioBitrateKbps
@@ -82,7 +82,8 @@ object VideoCalculator {
         )
 
         val result =
-          if (videoConversion.trimOnly) FFmpegUtils.trimVideo(adjustedConversion)
+          if (videoConversion.audioOnly) FFmpegUtils.extractAudio(adjustedConversion)
+          else if (videoConversion.trimOnly) FFmpegUtils.trimVideo(adjustedConversion)
           else FFmpegUtils.processVideo(adjustedConversion)
         result match {
           case Left(error) => Left(error)
