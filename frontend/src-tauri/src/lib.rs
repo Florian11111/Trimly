@@ -30,9 +30,22 @@ struct Tools {
     encoder: &'static str,
 }
 
+/// ffmpeg/ffprobe starten, ohne dass unter Windows jedes Mal ein Konsolenfenster aufblitzt.
+fn tool_command(path: &Path) -> Command {
+    let mut cmd = Command::new(path);
+    cmd.stdin(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 /// Läuft ein kurzer Test-Encode mit diesem Encoder durch?
 fn encoder_works(ffmpeg: &Path, encoder: &str) -> bool {
-    Command::new(ffmpeg)
+    tool_command(ffmpeg)
         .args(ffmpeg::encoder_test_args(encoder))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -48,7 +61,7 @@ fn tools() -> &'static Tools {
         // TRIMLY_ENCODER=cpu erzwingt Software-Kodierung (wie im Backend)
         let forced_cpu = std::env::var("TRIMLY_ENCODER").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
         let encoder = match (&ffmpeg, forced_cpu) {
-            (Some(path), false) => Command::new(path)
+            (Some(path), false) => tool_command(path)
                 .args(["-hide_banner", "-encoders"])
                 .output()
                 .ok()
@@ -94,8 +107,13 @@ struct ExportResult {
     encoder: String,
 }
 
+/// Async, damit das Warten auf den Encoder-Test nicht den Haupt-Thread (und damit das Fenster) blockiert.
 #[tauri::command]
-fn encoder_info() -> EncoderInfo {
+async fn encoder_info() -> Result<EncoderInfo, String> {
+    tauri::async_runtime::spawn_blocking(encoder_info_blocking).await.map_err(|e| e.to_string())
+}
+
+fn encoder_info_blocking() -> EncoderInfo {
     let t = tools();
     let hardware = t.ffmpeg.is_some() && ffmpeg::is_hardware(t.encoder);
     let label = match &t.ffmpeg {
@@ -141,7 +159,7 @@ fn media_url(path: String, server: State<'_, MediaServer>) -> Result<String, Str
 async fn probe(path: String) -> Result<VideoInfo, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let ffprobe = tools().ffprobe.clone().ok_or(MISSING_FFMPEG)?;
-        let out = Command::new(ffprobe)
+        let out = tool_command(&ffprobe)
             .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
             .arg(&path)
             .output()
@@ -164,9 +182,8 @@ fn run_ffmpeg(
     child_slot: &Mutex<Option<Child>>,
     cancelled: &Mutex<bool>,
 ) -> Result<(), String> {
-    let mut child = Command::new(ffmpeg_path)
+    let mut child = tool_command(ffmpeg_path)
         .args(args)
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

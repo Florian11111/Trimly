@@ -1,2 +1,4 @@
 /target/
+/binaries/ffmpeg-*
+/binaries/ffprobe-*
 /gen/schemas

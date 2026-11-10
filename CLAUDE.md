@@ -5,7 +5,7 @@ Videos schneiden und verkleinern. Eine React-Oberfläche, zwei Betriebsarten:
 - **Desktop (Tauri 2, macOS + Windows):** Rust ruft ffmpeg direkt auf der lokalen Datei auf, mit Hardware-Encoding (VideoToolbox, NVENC, Quick Sync, AMF).
 - **Web:** Upload an ein Scala/Play-Backend, das ffmpeg im Docker-Container ausführt (optional NVENC über `docker-compose.gpu.yml`, Windows-Start per `start-trimly.bat`).
 
-Florian nutzt beides: Mac (M5) und Windows mit NVIDIA-Karte.
+Florian nutzt beides: Mac (M5) und Windows-PC mit AMD Radeon RX 9070 XT (AMF, kein NVENC).
 
 ## Aufbau
 
@@ -32,10 +32,11 @@ Florian nutzt beides: Mac (M5) und Windows mit NVIDIA-Karte.
 
 ### Desktop (`frontend/src-tauri/src/`)
 
-- `ffmpeg.rs`: reine Logik ohne Prozesse. `find_tool` (PATH + Homebrew-Ordner, weil Finder-Apps den Shell-PATH nicht erben; unter Windows `.exe`, winget-Links, `C:\ffmpeg\bin`), `listed_hw_encoders` + `encoder_test_args` (Hardware-Encoder werden per Test-Encode geprüft, ffmpeg listet NVENC auch ohne Karte), `encoder_args` (**NVENC immer mit `-bf 0`**, sonst graues Bild bei 29,97 fps), `parse_probe`, `build_args` (`streams` both/video/audio), `progress_from_line`.
+- `ffmpeg.rs`: reine Logik ohne Prozesse. `find_tool` (zuerst neben der eigenen Programmdatei = mitgeliefertes ffmpeg, dann PATH + Homebrew-Ordner, weil Finder-Apps den Shell-PATH nicht erben; unter Windows `.exe`, winget-Links, `C:\ffmpeg\bin`), `listed_hw_encoders` + `encoder_test_args` (Hardware-Encoder werden per Test-Encode geprüft, ffmpeg listet NVENC auch ohne Karte), `encoder_args` (**NVENC immer mit `-bf 0`**, sonst graues Bild bei 29,97 fps), `parse_probe`, `build_args` (`streams` both/video/audio), `progress_from_line`.
 - `media_server.rs`: Vorschau-Videos laufen über einen eigenen HTTP-Server auf `127.0.0.1` (Zufallsport, Token in der URL, nur per `media_url` freigegebene Dateien). **Nicht zurück zum Tauri-Asset-Protokoll wechseln:** Es beantwortet Ranges mit höchstens 1 MB, und bei langen Videos ist der `moov`-Index größer, dann zeigt WebKit nur 0 × 0 ohne Bild.
-- `lib.rs`: Tauri-Commands `encoder_info`, `initial_file`, `frontend_log` (UI-Meldungen nach stderr, nützlich zur Fehlersuche ohne Fenster), `probe`, `media_url`, `export_video` (Fortschritt über `Channel<f64>`; scheitert ein Hardware-Encoder, automatisch neuer Versuch mit libx264), `cancel_export`. Es läuft höchstens ein Export gleichzeitig. Abbruch liefert den Fehler `"cancelled"`, den das Frontend still schluckt. `TRIMLY_ENCODER=cpu` erzwingt libx264.
-- „Öffnen mit“: `bundle.fileAssociations` (Rolle Viewer, Rang `Alternate` → nie Standardprogramm). Windows übergibt die Datei als Startargument, macOS als `RunEvent::Opened` → wird in `PendingFile` gemerkt und als Event `open-file` gemeldet; die UI holt sie per `initial_file` ab (liefert jede Datei nur einmal). Testen auf dem Mac: `open --stderr log.txt -a …/Trimly.app video.mp4`. Windows ist ungetestet; eine zweite Datei startet dort eine zweite Instanz (kein Single-Instance-Plugin).
+- Mitgeliefertes ffmpeg (nur Windows): `scripts/build-ffmpeg.sh` baut in MSYS2 UCRT64 ein schlankes, statisches ffmpeg/ffprobe (~18 MB, GPL wegen libx264) nach `binaries/` (nicht im Git). `tauri.windows.conf.json` packt es per `externalBin` neben `trimly.exe`. Ohne diese Dateien schlägt `desktop:build` unter Windows fehl. macOS nutzt weiter Homebrew-ffmpeg (Skript dort ungetestet).
+- `lib.rs`: alle ffmpeg-Aufrufe über `tool_command` (stdin null, unter Windows `CREATE_NO_WINDOW`, sonst blitzt aus der GUI-App bei jedem Aufruf ein Konsolenfenster auf). `encoder_info` ist async: synchrone Commands laufen im Haupt-Thread und hätten das Fenster bis zum Ende des Encoder-Tests eingefroren. Tauri-Commands `encoder_info`, `initial_file`, `frontend_log` (UI-Meldungen nach stderr, nützlich zur Fehlersuche ohne Fenster), `probe`, `media_url`, `export_video` (Fortschritt über `Channel<f64>`; scheitert ein Hardware-Encoder, automatisch neuer Versuch mit libx264), `cancel_export`. Es läuft höchstens ein Export gleichzeitig. Abbruch liefert den Fehler `"cancelled"`, den das Frontend still schluckt. `TRIMLY_ENCODER=cpu` erzwingt libx264.
+- „Öffnen mit“: `bundle.fileAssociations` (Rolle Viewer, Rang `Alternate` → nie Standardprogramm). Windows übergibt die Datei als Startargument, macOS als `RunEvent::Opened` → wird in `PendingFile` gemerkt und als Event `open-file` gemeldet; die UI holt sie per `initial_file` ab (liefert jede Datei nur einmal). Testen auf dem Mac: `open --stderr log.txt -a …/Trimly.app video.mp4`. „Öffnen mit“ unter Windows ist ungetestet; eine zweite Datei startet dort eine zweite Instanz (kein Single-Instance-Plugin).
 - Fehlersuche ohne Bildschirmzugriff: `cargo build && ./target/debug/trimly /pfad/video.mp4 2>&1 | grep '\[ui\]'` (Debug-Build lädt die UI von `localhost:3000`).
 - `tauri.conf.json`: macOS-Titelleiste als Overlay (`.is-desktop .topbar` lässt 84 px für die Ampel-Knöpfe frei).
 
@@ -81,7 +82,9 @@ README-Screenshots in `docs/images/` stammen von Playwright/WebKit gegen `docker
 ## Bekannte Baustellen
 
 - Editor nur im Web; für die Desktop-App bräuchte `EditRenderer.scala` ein Gegenstück in Rust. Der Editor hat noch eigene Presets (`src/presets.js`) statt `lib/presets.js`.
-- Windows-Build und „Öffnen mit“ unter Windows sind ungetestet (kein Windows-Rechner in der Entwicklungsumgebung).
+- Windows-Build läuft (November 2026, Node 26, Rust 1.99, VS Build Tools 2022, AMF getestet). Ungetestet: „Öffnen mit“ unter Windows, NVENC/Quick Sync mit dem mitgelieferten ffmpeg.
+- Windows-Build-Umgebung: `winget install` von `OpenJS.NodeJS.LTS`, `Rustlang.Rustup`, `Microsoft.VisualStudio.2022.BuildTools` (Workload VCTools), `MSYS2.MSYS2` (für ffmpeg). Ein Terminal, das vor der Installation offen war, kennt `npm` nicht.
+- Unter Windows aus Claudes Shell gestartete Installer landen in `AppData\Local\Packages\Claude_…\LocalCache` (MSIX-Umleitung), nicht in Florians echtem AppData. Installer daher von Florian per Doppelklick starten lassen.
 - Im Linux-Container gibt es kein VideoToolbox; der Server kann nur NVENC oder CPU.
 - Die Web-Version kennt die Bildrate der Quelle nicht und sendet die Preset-fps unverändert.
 - `backend/test/resources/testVideo.mp4` (63 MB) liegt im Git-Repo.

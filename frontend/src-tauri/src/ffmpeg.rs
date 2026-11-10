@@ -20,13 +20,14 @@ pub const HWS: &[&str] = &[
     "h264_amf",          // AMD
 ];
 
-/// Sucht ein Programm im PATH und in den üblichen Installationsordnern.
-/// Aus dem Finder gestartete Apps erben den PATH der Shell nicht.
+/// Sucht ein Programm: zuerst das mitgelieferte neben der Trimly-Programmdatei
+/// (Tauri `externalBin`, siehe scripts/build-ffmpeg.sh), dann im PATH und in den
+/// üblichen Installationsordnern. Aus dem Finder gestartete Apps erben den PATH der Shell nicht.
 pub fn find_tool(name: &str) -> Option<PathBuf> {
     let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).collect())
-        .unwrap_or_default();
+    let bundled = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
+    let mut dirs: Vec<PathBuf> = bundled.into_iter().collect();
+    dirs.extend(std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default());
     if cfg!(windows) {
         // winget legt Verknüpfungen hier ab; viele Anleitungen entpacken nach C:\ffmpeg
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
