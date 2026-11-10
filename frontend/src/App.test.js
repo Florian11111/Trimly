@@ -1,120 +1,79 @@
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
-import App from './App';
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import App from "./App";
 
-test('renders the dropzone', () => {
-  render(<App />);
-  expect(screen.getByText(/Ziehe eine Videodatei hierher/i)).toBeInTheDocument();
+let xhr;
+
+beforeEach(() => {
+  // jsdom kennt weder Blob-URLs noch echte Uploads
+  global.URL.createObjectURL = jest.fn(() => "blob:test");
+  global.URL.revokeObjectURL = jest.fn();
+  xhr = { open: jest.fn(), send: jest.fn(), upload: {} };
+  global.XMLHttpRequest = jest.fn(() => xhr);
 });
 
-test('dropping a video uploads it to /store', () => {
-  const opened = [];
-  const sent = [];
-  class FakeXHR {
-    upload = {};
-    open(method, url) { opened.push([method, url]); }
-    send(body) { sent.push(body); }
-    abort() {}
-  }
-  const origXHR = window.XMLHttpRequest;
-  window.XMLHttpRequest = FakeXHR;
-  URL.createObjectURL = jest.fn(() => 'blob:video');
-  URL.revokeObjectURL = jest.fn();
+const chooseFile = (file) =>
+  fireEvent.change(screen.getByTestId("file-input"), { target: { files: [file] } });
 
+const video = () => new File(["x"], "clip.mp4", { type: "video/mp4" });
+
+async function renderReady() {
   render(<App />);
-  const file = new File(['x'], 'clip.mp4', { type: 'video/mp4' });
-  fireEvent.drop(screen.getByText(/Ziehe eine Videodatei hierher/i).parentElement, {
-    dataTransfer: { files: [file] },
-  });
+  // Plattform wird asynchron geladen; danach ist der Knopf aktiv
+  await waitFor(() => expect(screen.getByRole("button", { name: "Video auswählen" })).toBeEnabled());
+}
 
-  expect(opened).toEqual([['POST', 'http://localhost:9000/store']]);
-  expect(sent[0].get('video')).toBe(file);
-  window.XMLHttpRequest = origXHR;
+test("starts with an invitation to drop or choose a video", async () => {
+  await renderReady();
+  expect(screen.getByRole("heading", { name: /Video hierher ziehen/ })).toBeInTheDocument();
 });
 
-test('file dialog starts in the Videos folder when supported', async () => {
-  const picker = jest.fn(() => Promise.reject(Object.assign(new Error('abort'), { name: 'AbortError' })));
-  window.showOpenFilePicker = picker;
+test("uploads a chosen video to /store and shows the editor", async () => {
+  await renderReady();
+  const file = video();
+  chooseFile(file);
 
-  render(<App />);
-  fireEvent.click(screen.getByText(/Ziehe eine Videodatei hierher/i));
-
-  expect(picker).toHaveBeenCalledWith(expect.objectContaining({ startIn: 'videos', id: 'trimly-videos' }));
-  delete window.showOpenFilePicker;
+  await waitFor(() => expect(xhr.open).toHaveBeenCalledWith("POST", "http://localhost:9000/store"));
+  expect(xhr.send.mock.calls[0][0].get("video")).toBe(file);
+  expect(screen.getByText("clip.mp4")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Exportieren und herunterladen" })).toBeInTheDocument();
 });
 
-test('preview and export audio controls are independent', () => {
-  window.XMLHttpRequest = class { upload = {}; open() {} send() {} abort() {} };
-  URL.createObjectURL = jest.fn(() => 'blob:video');
-  URL.revokeObjectURL = jest.fn();
-
-  render(<App />);
-  fireEvent.drop(screen.getByText(/Ziehe eine Videodatei hierher/i).parentElement, {
-    dataTransfer: { files: [new File(['x'], 'clip.mp4', { type: 'video/mp4' })] },
-  });
-
-  const playerMute = screen.getByLabelText(/stumm/);
-  const output = screen.getByLabelText("Ausgabe");
-  fireEvent.change(output, { target: { value: "video" } });
-  expect(screen.getByLabelText("Export-Lautstärke")).toBeDisabled();
-  expect(playerMute).not.toBeChecked();
-
-  // Export-Lautstärke ändert die Vorschau-Lautstärke nicht
-  fireEvent.change(output, { target: { value: "both" } });
-  fireEvent.change(screen.getByLabelText("Export-Lautstärke"), { target: { value: "2" } });
-  expect(screen.getByLabelText("Vorschau-Lautstärke")).toHaveValue("1");
-  expect(document.querySelector("video").volume).toBe(1);
+test("the web version offers no copy-only preset", async () => {
+  await renderReady();
+  chooseFile(video());
+  await screen.findByText("clip.mp4");
+  expect(screen.queryByLabelText(/Nur schneiden/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/Mittel/)).toBeChecked();
 });
 
-test('editor tab opens and hides the trim view', () => {
-  window.XMLHttpRequest = class { upload = {}; open() {} send() {} abort() {} };
-  URL.createObjectURL = jest.fn(() => 'blob:video');
-  URL.revokeObjectURL = jest.fn();
+test("rejects files that are not videos with a clear message", async () => {
+  await renderReady();
+  chooseFile(new File(["x"], "notes.pdf", { type: "application/pdf" }));
 
-  render(<App />);
-  fireEvent.drop(screen.getByText(/Ziehe eine Videodatei hierher/i).parentElement, {
-    dataTransfer: { files: [new File(['x'], 'clip.mp4', { type: 'video/mp4' })] },
-  });
-  fireEvent.click(screen.getByText(/Editor/));
-  // ohne geladene Metadaten (jsdom) zeigt der Editor einen Hinweis
-  expect(screen.getByText(/Lade zuerst ein Video/)).toBeInTheDocument();
-  expect(document.querySelector('.dropzone-wrapper')).toHaveStyle('display: none');
+  expect(await screen.findByRole("alert")).toHaveTextContent("Diese Datei ist kein Video");
+  expect(xhr.open).not.toHaveBeenCalled();
 });
 
-test('failed upload is retried on preview, audio-only is sent as output=audio', async () => {
-  const xhrs = [];
-  window.XMLHttpRequest = class {
-    upload = {};
-    constructor() { xhrs.push(this); }
-    open(method, url) { this.url = url; }
-    send(body) { this.body = body; }
-    abort() {}
-  };
-  URL.createObjectURL = jest.fn(() => 'blob:video');
-  URL.revokeObjectURL = jest.fn();
-  const origFetch = global.fetch;
-  global.fetch = jest.fn(() => Promise.resolve({ json: () => Promise.resolve({ status: 'error', message: 'x' }) }));
+test("shows upload progress while the original is sent", async () => {
+  await renderReady();
+  chooseFile(video());
+  await screen.findByText("clip.mp4");
 
-  render(<App />);
-  const file = new File(['x'], 'clip.mp4', { type: 'video/mp4' });
-  fireEvent.drop(screen.getByText(/Ziehe eine Videodatei hierher/i).parentElement, {
-    dataTransfer: { files: [file] },
-  });
-  // Server war nicht erreichbar
-  await act(async () => xhrs[0].onerror());
-  expect(screen.getByText(/Server nicht erreichbar/)).toBeInTheDocument();
+  act(() => xhr.upload.onprogress({ lengthComputable: true, loaded: 42, total: 100 }));
+  expect(screen.getByRole("progressbar", { name: "Wird hochgeladen, 42 %" })).toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText('Ausgabe'), { target: { value: 'audio' } });
-  fireEvent.click(screen.getByText('Preview'));
-  // Preview lädt dieselbe Datei erneut hoch
-  expect(xhrs).toHaveLength(2);
-  expect(xhrs[1].body.get('video')).toBe(file);
-  xhrs[1].status = 200;
-  xhrs[1].responseText = JSON.stringify({ status: 'success', originalId: 'abc' });
-  await act(async () => xhrs[1].onload());
+  xhr.responseText = JSON.stringify({ status: "success", originalId: "abc" });
+  act(() => xhr.onload());
+  expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+});
 
-  await waitFor(() => expect(global.fetch).toHaveBeenCalled());
-  const body = global.fetch.mock.calls[0][1].body;
-  expect(body.get('originalId')).toBe('abc');
-  expect(body.get('output')).toBe('audio');
-  global.fetch = origFetch;
+test("custom quality reveals resolution, frame rate and bitrate", async () => {
+  await renderReady();
+  chooseFile(video());
+  await screen.findByText("clip.mp4");
+
+  fireEvent.click(screen.getByLabelText(/Eigene/));
+  expect(screen.getByLabelText("Auflösung")).toBeInTheDocument();
+  expect(screen.getByLabelText("Bilder pro Sekunde")).toBeInTheDocument();
+  expect(screen.getByLabelText("Bitrate in kbit/s")).toBeInTheDocument();
 });

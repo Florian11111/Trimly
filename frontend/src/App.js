@@ -1,576 +1,628 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import VideoPlayer from "./VideoPlayer";
-import Editor from "./editor/Editor";
-import { PRESETS, DEFAULT_FINETUNE } from "./presets";
+import Timeline from "./components/Timeline";
+import { formatBytes, formatTime } from "./lib/format";
+import {
+  CUSTOM_HEIGHTS,
+  DEFAULT_CUSTOM,
+  estimateBytes,
+  findPreset,
+  presetsFor,
+  resolveTarget,
+  sourceVideoKbps,
+} from "./lib/presets";
+import { isDesktop, loadPlatform } from "./platform";
 
-const API = process.env.REACT_APP_API_URL !== undefined
-  ? process.env.REACT_APP_API_URL   // Prod: "" → relativ, nginx proxied
-  : "http://localhost:9000";         // Dev: kein Build, kein Env gesetzt
+const FRAME = 1 / 30;
 
-// Mindestlänge des Ausschnitts in Sekunden
-const MIN_CLIP = 0.01;
+export default function App() {
+  const [platform, setPlatform] = useState(null);
+  const [encoder, setEncoder] = useState(null);
 
-const VIDEO_EXTENSIONS = [".mp4", ".mkv", ".mov", ".webm", ".avi"];
+  const [video, setVideo] = useState(null); // { name, size, src, ref, dispose }
+  const [meta, setMeta] = useState(null); // { duration, width, height }
+  const [upload, setUpload] = useState(null); // Web: Upload-Fortschritt 0–100
+  const [range, setRange] = useState([0, 0]);
+  const [current, setCurrent] = useState(0);
+  const [playing, setPlaying] = useState(false);
 
-// Muss zu VideoCalculator.AudioBitrateKbps bzw. FFmpegUtils.AudioOnlyBitrateKbps im Backend passen
-const AUDIO_KBPS = 128;
-const AUDIO_ONLY_KBPS = 192;
+  const [presetId, setPresetId] = useState("medium");
+  const [custom, setCustom] = useState(DEFAULT_CUSTOM);
+  const [volume, setVolume] = useState(1);
 
-function App() {
-  const [videoURL, setVideoURL] = useState(null);
-  const [startTime, setStartTime] = useState(0);
-  const [endTime, setEndTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [volume, setVolume] = useState(1.0);
-  const [output, setOutput] = useState("both"); // "both" | "video" (ohne Ton) | "audio" (nur Ton)
-  const [playerVolume, setPlayerVolume] = useState(1.0);
-  const [finetune, setFinetune] = useState(DEFAULT_FINETUNE);
-  const [mode, setMode] = useState("medium");
-  const [message, setMessage] = useState("");
-  const [originalFileName, setOriginalFileName] = useState("");
-  const [originalFileSize, setOriginalFileSize] = useState(null);
-  const [previewFileSize, setPreviewFileSize] = useState(null);
-  const [currentUploadFilename, setCurrentUploadFilename] = useState(null);
-  const [previewing, setPreviewing] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(null);
-  const [previewedSettings, setPreviewedSettings] = useState(null);
-  const [storedOriginalId, setStoredOriginalId] = useState(null);
-  const [tab, setTab] = useState("trim"); // "trim" | "edit"
-  const [editorOpened, setEditorOpened] = useState(false);
+  const [job, setJob] = useState(null); // { state: running|done|error, progress, result, message }
+  const [dragging, setDragging] = useState(false);
+
   const videoRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const uploadXhrRef = useRef(null);
-  // Ausgewählte Datei bleibt erhalten, damit sie bei Bedarf erneut hochgeladen werden kann
-  const fileRef = useRef(null);
-  const uploadPromiseRef = useRef(null);
-  const originalIdRef = useRef(null);
+  const inputRef = useRef(null);
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
 
-  const formatFileSize = (bytes) => {
-    if (!bytes) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
-  };
+  // ─── Plattform laden ────────────────────────────────────────────────────
 
-  const openFileDialog = async () => {
-    if (videoURL) return;
-    // Chrome/Edge: Dialog im Videos-Ordner starten (dort speichern NVIDIA App und AMD ReLive),
-    // danach merkt sich der Browser über die id den zuletzt benutzten Unterordner
-    if (window.showOpenFilePicker) {
-      try {
-        const [handle] = await window.showOpenFilePicker({
-          id: "trimly-videos",
-          startIn: "videos",
-          types: [{ description: "Videos", accept: { "video/*": VIDEO_EXTENSIONS } }],
-        });
-        loadFile(await handle.getFile());
-      } catch (err) {
-        if (err.name !== "AbortError") fileInputRef.current?.click();
-      }
-      return;
-    }
-    fileInputRef.current?.click();
-  };
-
-  // Gemeinsam für Dateiauswahl und Drag & Drop: Datei anzeigen und im Hintergrund hochladen
-  const loadFile = (file) => {
-    const isVideo = file && (file.type.startsWith("video/") ||
-      VIDEO_EXTENSIONS.some(ext => file.name.toLowerCase().endsWith(ext)));
-    if (!isVideo) {
-      setMessage("Fehler: Bitte eine Videodatei auswählen.");
-      return;
-    }
-    if (videoURL) URL.revokeObjectURL(videoURL);
-
-    setOriginalFileName(file.name);
-    setVideoURL(URL.createObjectURL(file));
-    setOriginalFileSize(file.size);
-    setStartTime(0);
-    setEndTime(0);
-    setDuration(0);
-    setPreviewFileSize(null);
-    setCurrentUploadFilename(null);
-    setPreviewedSettings(null);
-    fileRef.current = file;
-    const uploadingMessage = "Video wird hochgeladen...";
-    setMessage(uploadingMessage);
-    uploadOriginal(file)
-      .then(() => setMessage(m => (m === uploadingMessage ? "" : m)))
-      .catch(err => {
-        if (err.name !== "AbortError") setMessage("Fehler beim Hochladen: " + err.message + " Wird bei Preview/Download erneut versucht.");
-      });
-  };
-
-  // Lädt das Original hoch; Promise liefert die Server-ID
-  const uploadOriginal = (file) => {
-    uploadXhrRef.current?.abort();
-    originalIdRef.current = null;
-    setStoredOriginalId(null);
-    setUploadProgress(0);
-
-    const xhr = new XMLHttpRequest();
-    uploadXhrRef.current = xhr;
-    const isCurrent = () => uploadXhrRef.current === xhr;
-    const promise = new Promise((resolve, reject) => {
-      const fail = (msg, name) => {
-        if (isCurrent()) {
-          uploadXhrRef.current = null;
-          uploadPromiseRef.current = null;
-          setUploadProgress(null);
-        }
-        const err = new Error(msg);
-        if (name) err.name = name;
-        reject(err);
-      };
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable && isCurrent()) setUploadProgress(Math.round((e.loaded / e.total) * 100));
-      };
-      xhr.onload = () => {
-        if (xhr.status === 413) return fail("Datei ist zu groß für den Server.");
-        let result;
-        try {
-          result = JSON.parse(xhr.responseText);
-        } catch {
-          return fail(`HTTP ${xhr.status}`);
-        }
-        if (result.status !== "success") return fail(result.message);
-        if (isCurrent()) {
-          uploadXhrRef.current = null;
-          setUploadProgress(null);
-          originalIdRef.current = result.originalId;
-          setStoredOriginalId(result.originalId);
-        }
-        resolve(result.originalId);
-      };
-      xhr.onerror = () => fail("Server nicht erreichbar.");
-      xhr.onabort = () => fail("Upload abgebrochen.", "AbortError");
-    });
-    uploadPromiseRef.current = promise;
-    const formData = new FormData();
-    formData.append("video", file);
-    xhr.open("POST", `${API}/store`);
-    xhr.send(formData);
-    return promise;
-  };
-
-  // Server-ID des Originals; wartet auf einen laufenden Upload oder lädt (erneut) hoch.
-  // forceNew: Server kennt die ID nicht mehr (abgelaufen / neu gestartet)
-  const ensureOriginal = async (forceNew = false) => {
-    if (!forceNew && originalIdRef.current) return originalIdRef.current;
-    if (!forceNew && uploadPromiseRef.current) {
-      try {
-        return await uploadPromiseRef.current;
-      } catch (err) {
-        if (err.name === "AbortError") throw err;
-        // fehlgeschlagen -> unten neu versuchen
-      }
-    }
-    if (!fileRef.current) throw new Error("Video ist nicht auf dem Server. Bitte erneut auswählen.");
-    return uploadOriginal(fileRef.current);
-  };
-
-  const handleFileChange = (e) => loadFile(e.target.files[0]);
-
-  const handleReset = () => {
-    uploadXhrRef.current?.abort();
-    uploadXhrRef.current = null;
-    uploadPromiseRef.current = null;
-    originalIdRef.current = null;
-    fileRef.current = null;
-    if (videoURL) URL.revokeObjectURL(videoURL);
-    setVideoURL(null);
-    setTab("trim");
-    setEditorOpened(false);
-    setStartTime(0);
-    setEndTime(0);
-    setDuration(0);
-    setCurrentTime(0);
-    setVolume(1.0);
-    setOutput("both");
-    setPlayerVolume(1.0);
-    setMode("medium");
-    setMessage("");
-    setOriginalFileSize(null);
-    setPreviewFileSize(null);
-    setCurrentUploadFilename(null);
-    setPreviewedSettings(null);
-    setStoredOriginalId(null);
-    setUploadProgress(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  // Alle Einstellungen, die das Ergebnis beeinflussen
-  const getSettings = () => {
-    if (mode === "original") {
-      return {
-        mode,
-        startMs: Math.floor(startTime * 1000),
-        endMs: Math.floor(endTime * 1000),
-        volume,
-        output,
-      };
-    }
-    let fps, resolution, bitrate;
-    if (mode === "finetune") {
-      fps = finetune.fps;
-      bitrate = finetune.bitrate;
-      resolution = finetune.resolution === "custom"
-        ? `${finetune.customWidth}x${finetune.customHeight}`
-        : finetune.resolution;
-    } else {
-      ({ fps, resolution, bitrate } = PRESETS[mode]);
-    }
-    return {
-      mode,
-      startMs: Math.floor(startTime * 1000),
-      endMs: Math.floor(endTime * 1000),
-      volume,
-      output,
-      fps,
-      resolution,
-      bitrate,
+  useEffect(() => {
+    let alive = true;
+    loadPlatform().then((p) => alive && setPlatform(p));
+    return () => {
+      alive = false;
     };
-  };
-
-  const validateSettings = (s) => {
-    if (s.mode === "original" || s.output === "audio") return null;
-    const [w, h] = s.resolution.split("x").map(Number);
-    if (!(w >= 16 && h >= 16)) return "Bitte gültige Breite und Höhe angeben.";
-    if (!(s.fps > 0)) return "Bitte gültige FPS angeben.";
-    if (!(s.bitrate > 0)) return "Bitte gültige Bitrate angeben.";
-    return null;
-  };
-
-  const buildFormData = (s, originalId) => {
-    const formData = new FormData();
-    formData.append("originalId", originalId);
-    formData.append("mode", s.mode);
-    formData.append("startTime", s.startMs);
-    formData.append("endTime", s.endMs);
-    formData.append("volume", s.volume);
-    formData.append("output", s.output);
-    if (s.mode === "original") return formData;
-    formData.append("framerate", s.fps);
-    formData.append("bitrate", s.bitrate);
-    formData.append("resolution", s.resolution);
-    return formData;
-  };
-
-  // Direkter Download-Link: der Browser streamt die Datei auf die Platte statt sie im RAM zu halten
-  const doDownload = (filename) => {
-    const nameParts = originalFileName.split(".");
-    const origExt = nameParts.length > 1 ? nameParts.pop() : "mp4";
-    const ext = filename.endsWith(".mp3") ? "mp3" : origExt;
-    const downloadName = `${nameParts.join(".")}_trim.${ext}`;
-    const a = document.createElement("a");
-    a.href = `${API}/download/${encodeURIComponent(filename)}?name=${encodeURIComponent(downloadName)}`;
-    a.download = downloadName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setMessage("Download gestartet!");
-  };
-
-  // Verarbeitet Video mit aktuellen Settings, speichert temporär
-  const handlePreview = async (autoDownload = false) => {
-    const settings = getSettings();
-    const invalid = validateSettings(settings);
-    if (invalid) {
-      setMessage("Fehler: " + invalid);
-      return;
-    }
-
-    setPreviewing(true);
-    setPreviewFileSize(null);
-    setCurrentUploadFilename(null);
-    const processingMessage = autoDownload ? "Verarbeitung läuft, Download startet danach..." : "Verarbeitung läuft...";
-
-    try {
-      let originalId;
-      try {
-        if (!originalIdRef.current) setMessage("Video wird hochgeladen, Verarbeitung startet danach...");
-        originalId = await ensureOriginal();
-      } catch (err) {
-        setMessage("Fehler beim Hochladen: " + err.message);
-        return;
-      }
-      setMessage(processingMessage);
-      const process = (id) => fetch(`${API}/process`, { method: "POST", body: buildFormData(settings, id) });
-      let result = await (await process(originalId)).json();
-      // Server kennt das Original nicht mehr (abgelaufen / neu gestartet): neu hochladen, nochmal versuchen
-      if (result.status === "missing") {
-        setMessage("Video ist nicht mehr auf dem Server, wird erneut hochgeladen...");
-        try {
-          originalId = await ensureOriginal(true);
-        } catch (err) {
-          setMessage("Fehler beim Hochladen: " + err.message);
-          return;
-        }
-        setMessage(processingMessage);
-        result = await (await process(originalId)).json();
-      }
-
-      if (result.status !== "success") {
-        setMessage("Fehler: " + result.message);
-        return;
-      }
-
-      const filename = result.filename;
-      const checkUrl = `${API}/check/${encodeURIComponent(filename)}`;
-
-      // Pollen bis fertig oder fehlgeschlagen (kein festes Zeitlimit, große Videos dauern)
-      for (;;) {
-        await new Promise(r => setTimeout(r, 1000));
-        let d;
-        try {
-          d = await (await fetch(checkUrl)).json();
-        } catch {
-          continue; // kurzzeitiger Netzwerkfehler
-        }
-        if (d.status === "ready") {
-          setCurrentUploadFilename(filename);
-          setPreviewFileSize(d.size);
-          setPreviewedSettings(JSON.stringify(settings));
-          if (autoDownload) doDownload(filename);
-          else setMessage("Preview bereit.");
-          return;
-        }
-        if (d.status === "error") {
-          setMessage("Fehler bei der Verarbeitung: " + d.message);
-          return;
-        }
-        if (d.status === "unknown") {
-          setMessage("Fehler: Verarbeitungsauftrag unbekannt (Server neu gestartet?). Bitte nochmal versuchen.");
-          return;
-        }
-      }
-    } catch (err) {
-      setMessage("Fehler: " + err.message);
-    } finally {
-      setPreviewing(false);
-    }
-  };
-
-  // Download nur ohne erneute Verarbeitung, wenn sich seit der Preview nichts geändert hat
-  const canDownload = !!(
-    currentUploadFilename &&
-    previewedSettings === JSON.stringify(getSettings())
-  );
-
-  // Sofortige Schätzung ohne Verarbeitung: Original = anteilige Dateigröße, sonst Bitrate × Länge
-  const estimateSize = () => {
-    const seconds = Math.max(0, endTime - startTime);
-    if (!duration || !originalFileSize || !seconds) return null;
-    if (output === "audio") return AUDIO_ONLY_KBPS * 1000 / 8 * seconds;
-    if (mode === "original") return originalFileSize * (seconds / duration);
-    const s = getSettings();
-    return (s.bitrate + (output === "video" ? 0 : AUDIO_KBPS)) * 1000 / 8 * seconds;
-  };
-
-  // Download: direkt wenn Preview gültig, sonst Preview → Download
-  const handleDownload = async () => {
-    if (canDownload) doDownload(currentUploadFilename);
-    else await handlePreview(true);
-  };
-
-  const updateStartTime = (t) => setStartTime(Math.max(0, Math.min(t, duration - MIN_CLIP)));
-  const updateEndTime = (t) => setEndTime(Math.max(MIN_CLIP, Math.min(t, duration)));
-
-  const togglePlayPause = () => {
-    const video = videoRef.current;
-    if (!video) return;
-    if (video.paused) video.play();
-    else video.pause();
-  };
-
-  const skipTime = React.useCallback((time) => {
-    const video = videoRef.current;
-    if (!video) return;
-    video.currentTime = Math.max(0, Math.min(duration, video.currentTime + time));
-  }, [duration]);
-
-  const changeVolume = React.useCallback((amount) => {
-    setPlayerVolume(v => Math.min(1, Math.max(0, v + amount)));
   }, []);
 
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (!videoURL || tab !== "trim") return;
-      // Tastenkürzel nicht auslösen, während in Eingabefeldern getippt wird
-      if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && e.target.type !== "range" && e.target.type !== "checkbox") return;
-      if (e.code === "Space") { e.preventDefault(); togglePlayPause(); }
-      if (e.code === "Period") { e.preventDefault(); skipTime(1 / 30); }
-      else if (e.code === "Comma") { e.preventDefault(); skipTime(-1 / 30); }
-      if (e.code === "ArrowRight") { e.preventDefault(); skipTime(5); }
-      else if (e.code === "ArrowLeft") { e.preventDefault(); skipTime(-5); }
-      // Exakte Position direkt vom Video (currentTime-State kommt per timeupdate nur ~4x pro Sekunde)
-      const now = videoRef.current ? videoRef.current.currentTime : currentTime;
-      if (e.code === "KeyS") updateStartTime(now);
-      else if (e.code === "KeyE") updateEndTime(now);
-      if (e.code === "ArrowUp") { e.preventDefault(); changeVolume(0.05); }
-      else if (e.code === "ArrowDown") { e.preventDefault(); changeVolume(-0.05); }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  });
+    platform?.encoderInfo?.().then(setEncoder).catch(() => {});
+  }, [platform]);
 
-  const handleDrop = (e) => {
-    e.preventDefault();
-    loadFile(e.dataTransfer.files[0]);
+  const log = useCallback((message) => platform?.log?.(message), [platform]);
+
+  // ─── Video öffnen ───────────────────────────────────────────────────────
+
+  // Alles vom vorigen Video verwerfen: Datei, Ausschnitt, Einstellungen, Ergebnis
+  const resetAll = useCallback(() => {
+    setVideo((prev) => {
+      prev?.dispose?.();
+      return null;
+    });
+    setMeta(null);
+    setUpload(null);
+    setRange([0, 0]);
+    setCurrent(0);
+    setPlaying(false);
+    setPresetId("medium");
+    setCustom(DEFAULT_CUSTOM);
+    setVolume(1);
+    setJob(null);
+    if (inputRef.current) inputRef.current.value = "";
+  }, []);
+
+  const openVideo = useCallback(
+    async (source) => {
+      if (!platform || !source) return;
+      resetAll();
+      try {
+        const next = await platform.open(source, { onUploadProgress: setUpload });
+        log(`geöffnet: ${next.name} ${JSON.stringify(next.ref?.info || {})}`);
+        setVideo(next);
+      } catch (e) {
+        setJob({ state: "error", message: e.message });
+      }
+    },
+    [platform, resetAll, log]
+  );
+
+  const chooseFile = async () => {
+    if (!platform) return;
+    if (platform.kind === "desktop") openVideo(await platform.pick());
+    else inputRef.current?.click();
   };
 
-  const handleDragOver = (e) => e.preventDefault();
-
-  const handleLoadedMetadata = () => {
-    const vid = videoRef.current;
-    setDuration(vid.duration);
-    setStartTime(0);
-    setEndTime(vid.duration);
+  // „Anderes Video“: zurück zum Start, dann gleich die Auswahl öffnen
+  const replaceVideo = () => {
+    resetAll();
+    chooseFile();
   };
 
-  const handleTimeUpdate = () => {
-    setCurrentTime(videoRef.current.currentTime);
-  };
-
-  // Beim Abspielen Playhead pro Frame aktualisieren (timeupdate allein ist zu grob)
+  // Desktop: Datei aus der Kommandozeile öffnen (`Trimly video.mp4`)
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    let raf = null;
+    platform?.initialFile?.().then((path) => path && openVideo(path)).catch(() => {});
+    // nur einmal nach dem Laden der Plattform
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platform]);
+
+  // Desktop: Drag & Drop aus dem Finder kommt über Tauri, nicht als DOM-Event
+  useEffect(() => {
+    if (!platform?.onDragDrop) return undefined;
+    let unlisten;
+    let alive = true;
+    platform
+      .onDragDrop((type, paths) => {
+        if (type === "enter" || type === "over") setDragging(true);
+        else if (type === "leave") setDragging(false);
+        else if (type === "drop") {
+          setDragging(false);
+          if (paths[0]) openVideo(paths[0]);
+        }
+      })
+      .then((fn) => (alive ? (unlisten = fn) : fn()));
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [platform, openVideo]);
+
+  const webDrop = {
+    onDragOver: (e) => {
+      if (platform?.kind !== "web") return;
+      e.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave: () => setDragging(false),
+    onDrop: (e) => {
+      if (platform?.kind !== "web") return;
+      e.preventDefault();
+      setDragging(false);
+      openVideo(e.dataTransfer.files[0]);
+    },
+  };
+
+  // ─── Wiedergabe ─────────────────────────────────────────────────────────
+
+  // Abmessungen von ffprobe (Desktop) sind verlässlicher als die des Players,
+  // der sie bei manchen Videos erst später oder gar nicht meldet.
+  const onLoadedMetadata = () => {
+    const v = videoRef.current;
+    const info = video?.ref?.info;
+    log(`loadedmetadata ${v.videoWidth}x${v.videoHeight} dauer=${v.duration} readyState=${v.readyState}`);
+    const duration = info?.duration || v.duration;
+    setMeta({
+      duration,
+      width: info?.width || v.videoWidth,
+      height: info?.height || v.videoHeight,
+    });
+    setRange([0, duration]);
+  };
+
+  const onResize = () => {
+    const v = videoRef.current;
+    log(`resize ${v.videoWidth}x${v.videoHeight}`);
+    if (!video?.ref?.info && v.videoWidth > 0) {
+      setMeta((m) => (m ? { ...m, width: v.videoWidth, height: v.videoHeight } : m));
+    }
+  };
+
+  const onVideoError = () => {
+    const err = videoRef.current?.error;
+    log(`video error code=${err?.code} ${err?.message || ""}`);
+    setJob({
+      state: "error",
+      message: "Die Vorschau kann dieses Video nicht abspielen. Exportieren funktioniert trotzdem.",
+    });
+  };
+
+  const seek = useCallback((t) => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = t;
+    setCurrent(t);
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (!v.paused) {
+      v.pause();
+      return;
+    }
+    const [s, e] = rangeRef.current;
+    if (v.currentTime < s || v.currentTime >= e - 0.05) v.currentTime = s;
+    v.play().catch(() => {});
+  }, []);
+
+  // Flüssiger Abspielkopf; hält am Ende des Ausschnitts an
+  useEffect(() => {
+    if (!playing) return undefined;
+    let raf;
     const tick = () => {
-      setCurrentTime(video.currentTime);
+      const v = videoRef.current;
+      if (!v) return;
+      const [, e] = rangeRef.current;
+      if (v.currentTime >= e) {
+        v.pause();
+        v.currentTime = e;
+      }
+      setCurrent(v.currentTime);
       raf = requestAnimationFrame(tick);
     };
-    const onPlay = () => { if (raf === null) raf = requestAnimationFrame(tick); };
-    const onStop = () => { if (raf !== null) cancelAnimationFrame(raf); raf = null; };
-    video.addEventListener("play", onPlay);
-    video.addEventListener("pause", onStop);
-    video.addEventListener("ended", onStop);
-    return () => {
-      onStop();
-      video.removeEventListener("play", onPlay);
-      video.removeEventListener("pause", onStop);
-      video.removeEventListener("ended", onStop);
-    };
-  }, [videoURL]);
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
 
-  // Ende immer hinter dem Start halten
+  const setIn = useCallback(() => {
+    setRange(([, e]) => [Math.min(videoRef.current?.currentTime ?? 0, e - 0.1), e]);
+  }, []);
+  const setOut = useCallback(() => {
+    setRange(([s]) => [s, Math.max(videoRef.current?.currentTime ?? 0, s + 0.1)]);
+  }, []);
+
   useEffect(() => {
-    if (duration > 0 && endTime <= startTime) setEndTime(Math.min(duration, startTime + 1));
-  }, [startTime, endTime, duration]);
+    if (!meta) return undefined;
+    const onKey = (e) => {
+      if (e.target.closest?.("input, select, textarea, [role=slider]")) return;
+      const v = videoRef.current;
+      if (!v) return;
+      const step = (s) => seek(Math.min(meta.duration, Math.max(0, v.currentTime + s)));
+      switch (e.code) {
+        case "Space":
+          e.preventDefault();
+          togglePlay();
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          step(-5);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          step(5);
+          break;
+        case "Comma":
+          step(-FRAME);
+          break;
+        case "Period":
+          step(FRAME);
+          break;
+        case "KeyI":
+        case "KeyS":
+          setIn();
+          break;
+        case "KeyO":
+        case "KeyE":
+          setOut();
+          break;
+        default:
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [meta, seek, togglePlay, setIn, setOut]);
 
-  const switchTab = (next) => {
-    if (next === "edit") {
-      videoRef.current?.pause();
-      setEditorOpened(true);
+  // ─── Export ─────────────────────────────────────────────────────────────
+
+  const desktop = platform?.kind === "desktop";
+  const presets = presetsFor(desktop);
+  const preset = findPreset(presetId);
+
+  const source = useMemo(
+    () =>
+      meta && video && meta.width > 0 && meta.height > 0
+        ? {
+            width: meta.width,
+            height: meta.height,
+            duration: meta.duration,
+            size: video.size,
+            fps: video.ref?.info?.fps || 0,
+            videoKbps: sourceVideoKbps(video.ref?.info, video.size, meta.duration),
+            audioKbps: video.ref?.info?.audioKbps || 0,
+          }
+        : null,
+    [meta, video]
+  );
+  const target = source ? resolveTarget(preset, custom, source) : null;
+  const clipLength = Math.max(0, range[1] - range[0]);
+  const estimate = source ? estimateBytes(target, clipLength, source) : 0;
+
+  // Lautstärke im Player mithören (Browser kann nicht über 100 % gehen)
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.volume = Math.min(1, volume);
+  }, [volume, video]);
+
+  // Geänderte Einstellungen machen ein altes Ergebnis ungültig
+  useEffect(() => {
+    setJob((j) => (j?.state === "done" ? null : j));
+  }, [presetId, custom, volume, range]);
+
+  const runExport = async () => {
+    if (!platform || !video || !target) return;
+    setJob({ state: "running", progress: desktop ? 0 : null });
+    try {
+      const result = await platform.exportVideo(
+        video,
+        { start: range[0], end: range[1], volume, target },
+        {
+          onProgress: (p) =>
+            setJob((j) => (j?.state === "running" ? { ...j, progress: p } : j)),
+        }
+      );
+      setJob(result ? { state: "done", result } : null);
+    } catch (e) {
+      const message = e.message || String(e);
+      setJob(message === "cancelled" ? null : { state: "error", message });
     }
-    setTab(next);
   };
 
-  return (
-    <div className={`App ${tab === "edit" ? "wide" : ""}`}>
-      <h1>🎬 Video Upload & Trim</h1>
+  const cancelExport = () => platform?.cancel?.();
 
-      {videoURL && (
-        <div className="tabs">
-          <button type="button" className={tab === "trim" ? "active" : ""} onClick={() => switchTab("trim")}>
-            ✂ Schneiden
+  // ─── Darstellung ────────────────────────────────────────────────────────
+
+  const running = job?.state === "running";
+  const uploading = upload !== null && !desktop;
+
+  return (
+    <div className={`app ${isDesktop ? "is-desktop" : ""}`} {...webDrop}>
+      <div className="backdrop" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+      <header className="topbar" data-tauri-drag-region>
+        <span className="brand" data-tauri-drag-region>
+          <TrimMark />
+          Trimly
+        </span>
+        {video && (
+          <span className="file" data-tauri-drag-region>
+            <span className="file-name" title={video.name}>{video.name}</span>
+            <span className="file-size">{formatBytes(video.size)}</span>
+          </span>
+        )}
+        {video && (
+          <button className="btn btn-quiet" onClick={replaceVideo} disabled={running}>
+            Anderes Video
           </button>
-          <button type="button" className={tab === "edit" ? "active" : ""} onClick={() => switchTab("edit")}>
-            🎞 Editor
-          </button>
-        </div>
-      )}
+        )}
+      </header>
 
       <input
+        ref={inputRef}
         type="file"
         accept="video/*"
-        ref={fileInputRef}
-        style={{ display: "none" }}
-        onChange={handleFileChange}
+        hidden
+        onChange={(e) => openVideo(e.target.files[0])}
+        data-testid="file-input"
       />
 
-      {/* Schneiden-Tab bleibt beim Tabwechsel erhalten (Marker, Player-Zustand) */}
-      <div className="dropzone-wrapper" style={{ display: tab === "trim" ? undefined : "none" }}>
-        {message && !videoURL && (
-          <p style={{ color: message.includes("Fehler") ? "red" : "green", marginBottom: "10px" }}>
-            {message}
-          </p>
-        )}
-        <div
-          className={`dropzone ${videoURL ? "loaded" : ""}`}
-          onClick={!videoURL ? openFileDialog : undefined}
-          onDrop={!videoURL ? handleDrop : undefined}
-          onDragOver={!videoURL ? handleDragOver : undefined}
-        >
-          {!videoURL ? (
-            <p>Ziehe eine Videodatei hierher oder klicke, um eine Datei auszuwählen</p>
-          ) : (
-            <VideoPlayer
-              videoURL={videoURL}
-              videoRef={videoRef}
-              currentTime={currentTime}
-              duration={duration}
-              startTime={startTime}
-              endTime={endTime}
-              volume={volume}
-              playerVolume={playerVolume}
-              finetune={finetune}
-              setFinetune={setFinetune}
-              handlePreview={handlePreview}
-              handleDownload={handleDownload}
-              handleReset={handleReset}
-              previewing={previewing}
-              uploadProgress={uploadProgress}
-              handleLoadedMetadata={handleLoadedMetadata}
-              handleTimeUpdate={handleTimeUpdate}
-              setStartTime={updateStartTime}
-              setEndTime={updateEndTime}
-              setVolume={setVolume}
-              output={output}
-              setOutput={setOutput}
-              setPlayerVolume={setPlayerVolume}
-              mode={mode}
-              setMode={setMode}
-              message={message}
-              setMessage={setMessage}
-              originalFileSize={originalFileSize}
-              previewFileSize={canDownload ? previewFileSize : null}
-              estimatedSize={estimateSize()}
-              formatFileSize={formatFileSize}
-            />
-          )}
-        </div>
-
-        <div className="info-panel-side">
-          <div style={{ fontWeight: 700, marginBottom: "10px" }}>Timeline Controls</div>
-          <div style={{ marginBottom: "10px" }}>
-            <div style={{ marginBottom: "6px" }}><strong>Click</strong> → Preview jump</div>
-            <div style={{ marginBottom: "6px" }}><strong>Shift + Click</strong> → Set start</div>
-            <div><strong>Alt + Click</strong> → Set end</div>
+      {!video ? (
+        <main className={`empty ${dragging ? "is-dragging" : ""}`}>
+          <div className="empty-inner">
+            <TrimMark large />
+            <h1>
+              Video hierher ziehen
+              <span>schneiden, verkleinern, fertig</span>
+            </h1>
+            <p>Wähle den Teil, den du brauchst. Trimly macht daraus eine kleinere Datei.</p>
+            <button className="btn btn-primary" onClick={chooseFile} disabled={!platform}>
+              Video auswählen
+            </button>
+            <p className="empty-formats">MP4, MOV, MKV und WebM</p>
+            {job?.state === "error" && <p className="notice notice-error" role="alert">{job.message}</p>}
           </div>
-        </div>
-      </div>
+        </main>
+      ) : (
+        <main key={video.src} className={`workspace ${dragging ? "is-dragging" : ""}`}>
+          <section className="stage">
+            <div className="screen">
+              <video
+                ref={videoRef}
+                src={video.src}
+                onLoadedMetadata={onLoadedMetadata}
+                onResize={onResize}
+                onLoadedData={() => log(`loadeddata readyState=${videoRef.current?.readyState}`)}
+                onError={onVideoError}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onTimeUpdate={(e) => !playing && setCurrent(e.currentTarget.currentTime)}
+                onClick={togglePlay}
+                playsInline
+                preload="auto"
+              />
+            </div>
 
-      {videoURL && editorOpened && (
-        <div style={{ display: tab === "edit" ? undefined : "none" }}>
-          <Editor
-            key={videoURL}
-            api={API}
-            active={tab === "edit"}
-            mainClip={duration > 0
-              ? { url: videoURL, name: originalFileName, duration, originalId: storedOriginalId }
-              : null}
-            ensureMainOriginal={ensureOriginal}
-            formatFileSize={formatFileSize}
-          />
-        </div>
+            <div className="transport">
+              <button
+                className="btn btn-icon"
+                onClick={togglePlay}
+                disabled={!meta}
+                aria-label={playing ? "Pause" : "Abspielen"}
+              >
+                {playing ? <PauseIcon /> : <PlayIcon />}
+              </button>
+              <span className="time">
+                {formatTime(current)}
+                <span className="time-total"> / {formatTime(meta?.duration)}</span>
+              </span>
+              <span className="marks">
+                <button className="mark" onClick={setIn} disabled={!meta} title="Anfang auf Abspielposition (I)">
+                  <span className="mark-label">Anfang</span>
+                  <span className="time">{formatTime(range[0])}</span>
+                </button>
+                <button className="mark" onClick={setOut} disabled={!meta} title="Ende auf Abspielposition (O)">
+                  <span className="mark-label">Ende</span>
+                  <span className="time">{formatTime(range[1])}</span>
+                </button>
+                <span className="mark mark-static">
+                  <span className="mark-label">Länge</span>
+                  <span className="time">{formatTime(clipLength)}</span>
+                </span>
+              </span>
+            </div>
+
+            <Timeline
+              src={video.src}
+              duration={meta?.duration || 0}
+              aspect={meta ? meta.width / meta.height : 16 / 9}
+              range={range}
+              current={current}
+              onSeek={seek}
+              onRangeChange={setRange}
+            />
+
+            <p className="hint">
+              Griffe ziehen oder <kbd>I</kbd> und <kbd>O</kbd> drücken, um Anfang und Ende zu setzen.
+              <kbd>Leertaste</kbd> spielt den Ausschnitt ab.
+            </p>
+          </section>
+
+          <aside className="panel" aria-label="Export">
+            <fieldset className="field">
+              <legend>Qualität</legend>
+              <div className="choices">
+                {presets.map((p) => (
+                  <label key={p.id} className={`choice ${presetId === p.id ? "is-active" : ""}`}>
+                    <input
+                      type="radio"
+                      name="preset"
+                      value={p.id}
+                      checked={presetId === p.id}
+                      onChange={() => setPresetId(p.id)}
+                      disabled={running}
+                    />
+                    <span className="choice-label">{p.label}</span>
+                    <span className="choice-hint">{p.hint}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            {presetId === "custom" && (
+              <div className="custom">
+                <label className="field-inline">
+                  <span>Auflösung</span>
+                  <select
+                    value={custom.height}
+                    onChange={(e) => setCustom({ ...custom, height: Number(e.target.value) })}
+                  >
+                    {CUSTOM_HEIGHTS.map((h) => (
+                      <option key={h.value} value={h.value}>{h.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field-inline">
+                  <span>Bilder pro Sekunde</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="240"
+                    value={custom.fps}
+                    onChange={(e) => setCustom({ ...custom, fps: e.target.value })}
+                  />
+                </label>
+                <label className="field-inline">
+                  <span>Bitrate in kbit/s</span>
+                  <input
+                    type="number"
+                    min="100"
+                    step="100"
+                    value={custom.bitrate}
+                    onChange={(e) => setCustom({ ...custom, bitrate: e.target.value })}
+                  />
+                </label>
+              </div>
+            )}
+
+            <label className="field">
+              <span className="field-row">
+                <span className="legend">Lautstärke</span>
+                <span className="value">{volume === 0 ? "Stumm" : `${Math.round(volume * 100)} %`}</span>
+              </span>
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.05"
+                value={volume}
+                onChange={(e) => setVolume(Number(e.target.value))}
+                disabled={running}
+                aria-label="Lautstärke"
+              />
+            </label>
+
+            <div className="summary">
+              {target && !target.copy && (
+                <p className="summary-line">
+                  {target.width} × {target.height}, {Math.round(target.fps)} fps, {target.bitrate} kbit/s
+                </p>
+              )}
+              {target?.capped && (
+                <p className="summary-line">Bitrate auf die des Originals begrenzt</p>
+              )}
+              <p className="summary-size">
+                <span>ca. {formatBytes(estimate)}</span>
+                {video && <span className="summary-original">statt {formatBytes(video.size)}</span>}
+              </p>
+            </div>
+
+            {uploading && (
+              <Progress value={upload} label={`Wird hochgeladen, ${upload} %`} />
+            )}
+
+            {running ? (
+              <div className="running">
+                <Progress
+                  value={job.progress === null ? null : Math.round(job.progress * 100)}
+                  label={
+                    job.progress === null
+                      ? "Wird verarbeitet"
+                      : `Wird exportiert, ${Math.round(job.progress * 100)} %`
+                  }
+                />
+                {platform?.cancel && (
+                  <button className="btn btn-quiet btn-block" onClick={cancelExport}>
+                    Abbrechen
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                className="btn btn-primary btn-block"
+                onClick={runExport}
+                disabled={!meta || clipLength <= 0}
+              >
+                {desktop ? "Exportieren" : "Exportieren und herunterladen"}
+              </button>
+            )}
+
+            {job?.state === "done" && (
+              <div className="notice notice-done" role="status">
+                <p>
+                  <strong>{job.result.savedAs}</strong> ist fertig, {formatBytes(job.result.size)}.
+                </p>
+                {job.result.path && platform?.reveal && (
+                  <button className="btn btn-quiet" onClick={() => platform.reveal(job.result.path)}>
+                    Im Finder zeigen
+                  </button>
+                )}
+              </div>
+            )}
+            {job?.state === "error" && (
+              <p className="notice notice-error" role="alert">{job.message}</p>
+            )}
+
+            {encoder && (
+              <p className={`encoder ${encoder.hardware ? "is-hardware" : ""}`}>{encoder.label}</p>
+            )}
+          </aside>
+        </main>
       )}
     </div>
   );
 }
 
-export default App;
+function Progress({ value, label }) {
+  const indeterminate = value === null || value === undefined;
+  return (
+    <div className="progress">
+      <div
+        className={`progress-bar ${indeterminate ? "is-indeterminate" : ""}`}
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={indeterminate ? undefined : value}
+      >
+        <span style={indeterminate ? undefined : { width: `${value}%` }} />
+      </div>
+      <p className="progress-label">{label}</p>
+    </div>
+  );
+}
+
+function TrimMark({ large }) {
+  const size = large ? 56 : 18;
+  return (
+    <svg className="trim-mark" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 3H3v18h4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M17 3h4v18h-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M10 8.5v7l5.5-3.5z" fill="currentColor" />
+    </svg>
+  );
+}
+
+const PlayIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M4 2.5v11l9.5-5.5z" fill="currentColor" />
+  </svg>
+);
+
+const PauseIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+    <path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z" fill="currentColor" />
+  </svg>
+);

@@ -1,0 +1,109 @@
+import { Channel, invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { fileExtension, fileStem } from "../lib/format";
+
+const VIDEO_EXTENSIONS = ["mp4", "mov", "m4v", "mkv", "webm", "avi"];
+
+const baseName = (path) => path.slice(path.lastIndexOf("/") + 1);
+const dirName = (path) => path.slice(0, path.lastIndexOf("/") + 1);
+
+const asError = (e) => (e instanceof Error ? e : new Error(String(e)));
+
+export function createDesktopPlatform() {
+  return {
+    kind: "desktop",
+
+    async pick() {
+      const path = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Video", extensions: VIDEO_EXTENSIONS }],
+      });
+      return typeof path === "string" ? path : null;
+    },
+
+    async open(path) {
+      let info;
+      let src;
+      try {
+        info = await invoke("probe", { path });
+        // Eigener lokaler Server statt Asset-Protokoll, siehe media_server.rs
+        src = await invoke("media_url", { path });
+      } catch (e) {
+        throw asError(e);
+      }
+      return {
+        name: baseName(path),
+        size: info.size,
+        src,
+        ref: { path, info },
+        dispose: () => {},
+      };
+    },
+
+    async exportVideo(video, job, { onProgress } = {}) {
+      const { start, end, volume, target } = job;
+      const ext = target.copy ? fileExtension(video.name) || "mp4" : "mp4";
+      const output = await save({
+        defaultPath: `${dirName(video.ref.path)}${fileStem(video.name)}_trim.${ext}`,
+        filters: [{ name: "Video", extensions: [ext] }],
+      });
+      if (!output) return null;
+
+      const channel = new Channel();
+      channel.onmessage = (p) => onProgress?.(p);
+      onProgress?.(0);
+
+      try {
+        const result = await invoke("export_video", {
+          request: {
+            input: video.ref.path,
+            output,
+            start,
+            end,
+            volume,
+            copy: !!target.copy,
+            width: target.width ?? null,
+            height: target.height ?? null,
+            fps: target.fps ?? null,
+            bitrate: target.bitrate ?? null,
+            audioBitrate: target.audioBitrate ?? null,
+          },
+          onProgress: channel,
+        });
+        return { size: result.size, path: output, savedAs: baseName(output), seconds: result.seconds };
+      } catch (e) {
+        throw asError(e);
+      }
+    },
+
+    async initialFile() {
+      return invoke("initial_file");
+    },
+
+    log(message) {
+      invoke("frontend_log", { message }).catch(() => {});
+    },
+
+    async cancel() {
+      await invoke("cancel_export");
+    },
+
+    async encoderInfo() {
+      return invoke("encoder_info");
+    },
+
+    async onDragDrop(handler) {
+      return getCurrentWebview().onDragDropEvent((event) => {
+        const { type, paths } = event.payload;
+        handler(type, paths || []);
+      });
+    },
+
+    async reveal(path) {
+      await revealItemInDir(path);
+    },
+  };
+}

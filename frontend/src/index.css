@@ -1,13 +1,133 @@
+:root {
+  /* Nachtblau mit Glasflächen; Blau-Violett für Aktionen, Orange für den Schnitt */
+  --canvas: #08091a;
+  --panel: rgba(20, 22, 48, 0.55);
+  --raised: rgba(255, 255, 255, 0.07);
+  --line: rgba(255, 255, 255, 0.1);
+  --text: #eef0ff;
+  --muted: #a6a9cc;
+  --violet: #8a5cff;
+  --blue: #3f7bff;
+  --trim: #ffa95e;
+  --trim-ink: #2e1604;
+  --danger: #ff8e8e;
+  --glass-blur: blur(22px) saturate(140%);
+
+  --radius-s: 6px;
+  --radius-m: 10px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--trim);
+  outline-offset: 2px;
+}
+
+/* ─── Bewegter Hintergrund ─────────────────────────────────────────────── */
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: radial-gradient(100% 70% at 30% 0%, #14153a 0%, var(--canvas) 55%);
+}
+
+/* Überwiegend dunkel, nur wenige weiche Lichtinseln */
+.backdrop span {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(100px);
+  will-change: transform;
+}
+
+.backdrop span:nth-child(1) {
+  top: -14vmax;
+  left: -6vmax;
+  width: 38vmax;
+  height: 38vmax;
+  background: var(--violet);
+  opacity: 0.26;
+  animation: drift-a 34s ease-in-out infinite alternate;
+}
+
+.backdrop span:nth-child(2) {
+  right: -12vmax;
+  top: 22vmax;
+  width: 30vmax;
+  height: 30vmax;
+  background: var(--blue);
+  opacity: 0.18;
+  animation: drift-b 40s ease-in-out infinite alternate;
+}
+
+/* Kleiner, etwas hellerer Akzent */
+.backdrop span:nth-child(3) {
+  bottom: -10vmax;
+  left: 34vmax;
+  width: 20vmax;
+  height: 20vmax;
+  background: #ff7a3d;
+  opacity: 0.2;
+  filter: blur(80px);
+  animation: drift-c 46s ease-in-out infinite alternate;
+}
+
+@keyframes drift-a {
+  to {
+    transform: translate(18vmax, 12vmax) scale(1.15);
+  }
+}
+
+@keyframes drift-b {
+  to {
+    transform: translate(-16vmax, 14vmax) scale(0.9);
+  }
+}
+
+@keyframes drift-c {
+  to {
+    transform: translate(-14vmax, -10vmax) scale(1.2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
