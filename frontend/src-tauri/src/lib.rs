@@ -6,15 +6,22 @@ use media_server::MediaServer;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::ipc::Channel;
 use tauri::{Manager, State};
 
+#[cfg(target_os = "macos")]
 const MISSING_FFMPEG: &str =
     "ffmpeg wurde nicht gefunden. Installiere es im Terminal mit: brew install ffmpeg";
+#[cfg(windows)]
+const MISSING_FFMPEG: &str =
+    "ffmpeg wurde nicht gefunden. Installiere es in der Eingabeaufforderung mit: winget install ffmpeg";
+#[cfg(not(any(target_os = "macos", windows)))]
+const MISSING_FFMPEG: &str = "ffmpeg wurde nicht gefunden. Installiere es über die Paketverwaltung.";
+
 pub const CANCELLED: &str = "cancelled";
 
 struct Tools {
@@ -23,15 +30,36 @@ struct Tools {
     encoder: &'static str,
 }
 
+/// Läuft ein kurzer Test-Encode mit diesem Encoder durch?
+fn encoder_works(ffmpeg: &Path, encoder: &str) -> bool {
+    Command::new(ffmpeg)
+        .args(ffmpeg::encoder_test_args(encoder))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn tools() -> &'static Tools {
     static TOOLS: OnceLock<Tools> = OnceLock::new();
     TOOLS.get_or_init(|| {
         let ffmpeg = ffmpeg::find_tool("ffmpeg");
-        let encoder = ffmpeg
-            .as_ref()
-            .and_then(|p| Command::new(p).args(["-hide_banner", "-encoders"]).output().ok())
-            .map(|o| ffmpeg::pick_encoder(&String::from_utf8_lossy(&o.stdout)))
-            .unwrap_or(ffmpeg::SW_ENCODER);
+        // TRIMLY_ENCODER=cpu erzwingt Software-Kodierung (wie im Backend)
+        let forced_cpu = std::env::var("TRIMLY_ENCODER").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
+        let encoder = match (&ffmpeg, forced_cpu) {
+            (Some(path), false) => Command::new(path)
+                .args(["-hide_banner", "-encoders"])
+                .output()
+                .ok()
+                .map(|o| ffmpeg::listed_hw_encoders(&String::from_utf8_lossy(&o.stdout)))
+                .unwrap_or_default()
+                .into_iter()
+                .find(|e| encoder_works(path, e))
+                .unwrap_or(ffmpeg::SW_ENCODER),
+            _ => ffmpeg::SW_ENCODER,
+        };
+        eprintln!("[ffmpeg] {:?}, Encoder: {encoder}", ffmpeg);
         Tools { ffmpeg, ffprobe: ffmpeg::find_tool("ffprobe"), encoder }
     })
 }
@@ -41,6 +69,13 @@ fn tools() -> &'static Tools {
 struct Running {
     child: Arc<Mutex<Option<Child>>>,
     cancelled: Arc<Mutex<bool>>,
+}
+
+/// Datei, die per „Öffnen mit“ kam und noch nicht von der Oberfläche abgeholt wurde.
+#[derive(Default)]
+struct PendingFile {
+    path: Mutex<Option<String>>,
+    argv_used: Mutex<bool>,
 }
 
 #[derive(Serialize)]
@@ -62,24 +97,28 @@ struct ExportResult {
 #[tauri::command]
 fn encoder_info() -> EncoderInfo {
     let t = tools();
-    let label = match (&t.ffmpeg, t.encoder) {
-        (None, _) => MISSING_FFMPEG.to_string(),
-        (Some(_), ffmpeg::HW_ENCODER) => "Kodierung mit Apple VideoToolbox (Hardware)".to_string(),
-        (Some(_), _) => "Kodierung mit libx264 (Software)".to_string(),
+    let hardware = t.ffmpeg.is_some() && ffmpeg::is_hardware(t.encoder);
+    let label = match &t.ffmpeg {
+        None => MISSING_FFMPEG.to_string(),
+        Some(_) if hardware => format!("Kodierung mit {} (Hardware)", ffmpeg::encoder_label(t.encoder)),
+        Some(_) => "Kodierung mit libx264 (Software)".to_string(),
     };
-    EncoderInfo {
-        label,
-        hardware: t.ffmpeg.is_some() && t.encoder == ffmpeg::HW_ENCODER,
-        ffmpeg: t.ffmpeg.as_ref().map(|p| p.display().to_string()),
-    }
+    EncoderInfo { label, hardware, ffmpeg: t.ffmpeg.as_ref().map(|p| p.display().to_string()) }
 }
 
-/// Datei aus der Kommandozeile (`Trimly video.mp4`), falls angegeben.
+/// Datei, mit der Trimly geöffnet wurde: „Öffnen mit“ auf macOS (Ereignis) oder
+/// Startargument (Windows-Dateizuordnung, `Trimly video.mp4`). Liefert sie nur einmal.
 #[tauri::command]
-fn initial_file() -> Option<String> {
-    std::env::args()
-        .skip(1)
-        .find(|a| !a.starts_with('-') && std::path::Path::new(a).is_file())
+fn initial_file(pending: State<'_, PendingFile>) -> Option<String> {
+    if let Some(path) = pending.path.lock().unwrap().take() {
+        return Some(path);
+    }
+    let mut used = pending.argv_used.lock().unwrap();
+    if *used {
+        return None;
+    }
+    *used = true;
+    std::env::args().skip(1).find(|a| !a.starts_with('-') && Path::new(a).is_file())
 }
 
 /// Meldungen der Oberfläche im Terminal ausgeben (Fehlersuche).
@@ -116,6 +155,62 @@ async fn probe(path: String) -> Result<VideoInfo, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Ein ffmpeg-Lauf mit Fortschritt. Err(CANCELLED) bei Abbruch, sonst Err mit den letzten stderr-Zeilen.
+fn run_ffmpeg(
+    ffmpeg_path: &Path,
+    args: &[String],
+    clip: f64,
+    on_progress: &Channel<f64>,
+    child_slot: &Mutex<Option<Child>>,
+    cancelled: &Mutex<bool>,
+) -> Result<(), String> {
+    let mut child = Command::new(ffmpeg_path)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("ffmpeg konnte nicht gestartet werden: {e}"))?;
+
+    let stdout = child.stdout.take().expect("stdout ist gepiped");
+    let mut stderr = child.stderr.take().expect("stderr ist gepiped");
+    *child_slot.lock().unwrap() = Some(child);
+
+    // stderr nebenher leeren (sonst kann ffmpeg blockieren), letzte Zeilen behalten
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = stderr.read_to_string(&mut buf);
+        let tail: VecDeque<&str> = buf.lines().rev().take(6).collect();
+        tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+    });
+
+    let mut last_sent = -1.0;
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        if let Some(p) = ffmpeg::progress_from_line(&line, clip) {
+            if p - last_sent >= 0.005 || p >= 1.0 {
+                last_sent = p;
+                let _ = on_progress.send(p);
+            }
+        }
+    }
+
+    let status = {
+        let mut slot = child_slot.lock().unwrap();
+        let status = slot.as_mut().map(|c| c.wait());
+        *slot = None;
+        status
+    };
+    let stderr_tail = stderr_reader.join().unwrap_or_default();
+
+    if *cancelled.lock().unwrap() {
+        return Err(CANCELLED.to_string());
+    }
+    match status {
+        Some(Ok(s)) if s.success() => Ok(()),
+        _ => Err(format!("ffmpeg ist fehlgeschlagen:\n{stderr_tail}")),
+    }
+}
+
 #[tauri::command]
 async fn export_video(
     request: ExportRequest,
@@ -128,73 +223,53 @@ async fn export_video(
     tauri::async_runtime::spawn_blocking(move || {
         let t = tools();
         let ffmpeg_path = t.ffmpeg.clone().ok_or(MISSING_FFMPEG)?;
-        let args = ffmpeg::build_args(&request, t.encoder)?;
         let clip = request.clip_seconds();
         let started = Instant::now();
 
-        {
-            let slot = child_slot.lock().unwrap();
-            if slot.is_some() {
-                return Err("Es läuft bereits ein Export.".to_string());
-            }
+        if child_slot.lock().unwrap().is_some() {
+            return Err("Es läuft bereits ein Export.".to_string());
         }
         *cancelled.lock().unwrap() = false;
 
-        let mut child = Command::new(ffmpeg_path)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("ffmpeg konnte nicht gestartet werden: {e}"))?;
+        let encodes_video = !request.copy && request.streams != "audio";
+        let mut encoder = t.encoder;
+        let mut result = run_ffmpeg(
+            &ffmpeg_path,
+            &ffmpeg::build_args(&request, encoder)?,
+            clip,
+            &on_progress,
+            &child_slot,
+            &cancelled,
+        );
 
-        let stdout = child.stdout.take().expect("stdout ist gepiped");
-        let mut stderr = child.stderr.take().expect("stderr ist gepiped");
-        *child_slot.lock().unwrap() = Some(child);
-
-        // stderr nebenher leeren (sonst kann ffmpeg blockieren), letzte Zeilen behalten
-        let stderr_reader = std::thread::spawn(move || {
-            let mut buf = String::new();
-            let _ = stderr.read_to_string(&mut buf);
-            let tail: VecDeque<&str> = buf.lines().rev().take(6).collect();
-            tail.into_iter().rev().collect::<Vec<_>>().join("\n")
-        });
-
-        let mut last_sent = -1.0;
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if let Some(p) = ffmpeg::progress_from_line(&line, clip) {
-                if p - last_sent >= 0.005 || p >= 1.0 {
-                    last_sent = p;
-                    let _ = on_progress.send(p);
-                }
+        // Hardware kann an einzelnen Videos scheitern (10 bit, exotische Auflösung):
+        // dann mit libx264 neu versuchen, wie das Backend
+        if let Err(e) = &result {
+            if e != CANCELLED && encodes_video && ffmpeg::is_hardware(encoder) {
+                eprintln!("[ffmpeg] {encoder} fehlgeschlagen, nutze libx264: {e}");
+                encoder = ffmpeg::SW_ENCODER;
+                let _ = on_progress.send(0.0);
+                result = run_ffmpeg(
+                    &ffmpeg_path,
+                    &ffmpeg::build_args(&request, encoder)?,
+                    clip,
+                    &on_progress,
+                    &child_slot,
+                    &cancelled,
+                );
             }
         }
 
-        let status = {
-            let mut slot = child_slot.lock().unwrap();
-            let status = slot.as_mut().map(|c| c.wait());
-            *slot = None;
-            status
-        };
-        let stderr_tail = stderr_reader.join().unwrap_or_default();
-
-        if *cancelled.lock().unwrap() {
+        if let Err(e) = result {
             let _ = std::fs::remove_file(&request.output);
-            return Err(CANCELLED.to_string());
-        }
-        match status {
-            Some(Ok(s)) if s.success() => {}
-            _ => {
-                let _ = std::fs::remove_file(&request.output);
-                return Err(format!("ffmpeg ist fehlgeschlagen:\n{stderr_tail}"));
-            }
+            return Err(e);
         }
 
         let size = std::fs::metadata(&request.output).map(|m| m.len()).unwrap_or(0);
         Ok(ExportResult {
             size,
             seconds: started.elapsed().as_secs_f64(),
-            encoder: if request.copy { "copy".into() } else { t.encoder.to_string() },
+            encoder: if encodes_video { encoder.to_string() } else { "copy".into() },
         })
     })
     .await
@@ -211,14 +286,15 @@ fn cancel_export(running: State<'_, Running>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Running::default())
+        .manage(PendingFile::default())
         .setup(|app| {
             let server = MediaServer::start().map_err(|e| format!("Vorschau-Server: {e}"))?;
             app.manage(server);
-            // ffmpeg-Suche und Encoder-Erkennung im Hintergrund vorwärmen
+            // ffmpeg-Suche und Encoder-Test im Hintergrund vorwärmen
             std::thread::spawn(|| {
                 tools();
             });
@@ -233,6 +309,19 @@ pub fn run() {
             export_video,
             cancel_export
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("Trimly konnte nicht gestartet werden");
+
+    app.run(|_app, _event| {
+        // macOS liefert „Öffnen mit“ als Ereignis, nicht als Startargument. Die Datei wird
+        // gemerkt (falls die Oberfläche noch lädt) und die Oberfläche benachrichtigt.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = &_event {
+            use tauri::Emitter;
+            if let Some(path) = urls.iter().find_map(|u| u.to_file_path().ok()) {
+                *_app.state::<PendingFile>().path.lock().unwrap() = Some(path.display().to_string());
+                let _ = _app.emit("open-file", ());
+            }
+        }
+    });
 }

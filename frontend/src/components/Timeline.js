@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { formatTime } from "../lib/format";
 
 const STRIP_HEIGHT = 64;
-const MIN_LENGTH = 0.1; // Sekunden
+const MIN_LENGTH = 0.01; // Sekunden
+const HOLD_MS = 200; // so lange gedrückt halten, bis ein Griff verschiebbar wird
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -15,6 +16,8 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
   const trackRef = useRef(null);
   const canvasRef = useRef(null);
   const dragRef = useRef(null);
+  const holdRef = useRef(null); // { mode, time, timer } solange ein Griff gedrückt, aber noch nicht gegriffen ist
+  const [grabbing, setGrabbing] = useState(null);
   const [width, setWidth] = useState(0);
   const [start, end] = range;
 
@@ -84,16 +87,31 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
     else onSeek(t);
   };
 
-  const beginDrag = (mode) => (e) => {
+  // Streifen: Klicken oder Ziehen springt; Shift/Alt setzt Anfang/Ende
+  const pressTrack = (e) => {
     if (!duration || e.button !== 0) return;
     e.preventDefault();
-    e.stopPropagation();
-    let m = mode;
-    if (m === "seek" && e.shiftKey) m = "start";
-    else if (m === "seek" && e.altKey) m = "end";
+    let m = "seek";
+    if (e.shiftKey) m = "start";
+    else if (e.altKey) m = "end";
     dragRef.current = m;
     trackRef.current.setPointerCapture?.(e.pointerId);
     apply(m, timeAt(e.clientX));
+  };
+
+  // Griff: kurzer Klick springt an die Stelle, erst Gedrückthalten macht ihn verschiebbar
+  const pressHandle = (mode) => (e) => {
+    if (!duration || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    trackRef.current.setPointerCapture?.(e.pointerId);
+    const time = timeAt(e.clientX);
+    const timer = setTimeout(() => {
+      holdRef.current = null;
+      dragRef.current = mode;
+      setGrabbing(mode);
+    }, HOLD_MS);
+    holdRef.current = { time, timer };
   };
 
   const onPointerMove = (e) => {
@@ -101,9 +119,19 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
   };
 
   const endDrag = (e) => {
+    const hold = holdRef.current;
+    if (hold) {
+      // losgelassen, bevor der Griff gegriffen war: wie ein Klick → springen
+      clearTimeout(hold.timer);
+      holdRef.current = null;
+      onSeek(hold.time);
+    }
     dragRef.current = null;
+    setGrabbing(null);
     trackRef.current?.releasePointerCapture?.(e.pointerId);
   };
+
+  useEffect(() => () => clearTimeout(holdRef.current?.timer), []);
 
   const handleKeys = (which) => (e) => {
     const step = e.shiftKey ? 1 : 0.1;
@@ -120,9 +148,9 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
     <div className="timeline">
       <div
         ref={trackRef}
-        className="timeline-track"
+        className={`timeline-track ${grabbing ? `is-grabbing-${grabbing}` : ""}`}
         style={{ height: STRIP_HEIGHT }}
-        onPointerDown={beginDrag("seek")}
+        onPointerDown={pressTrack}
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
@@ -141,7 +169,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
             aria-valuemax={duration}
             aria-valuenow={start}
             aria-valuetext={formatTime(start)}
-            onPointerDown={beginDrag("start")}
+            onPointerDown={pressHandle("start")}
             onKeyDown={handleKeys("start")}
           />
           <div
@@ -153,7 +181,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
             aria-valuemax={duration}
             aria-valuenow={end}
             aria-valuetext={formatTime(end)}
-            onPointerDown={beginDrag("end")}
+            onPointerDown={pressHandle("end")}
             onKeyDown={handleKeys("end")}
           />
         </div>

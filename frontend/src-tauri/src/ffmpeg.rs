@@ -4,31 +4,89 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub const HW_ENCODER: &str = "h264_videotoolbox";
 pub const SW_ENCODER: &str = "libx264";
-const DEFAULT_AUDIO_KBPS: u32 = 160;
+/// Muss zu AUDIO_KBPS im Frontend und VideoCalculator.AudioBitrateKbps im Backend passen
+const DEFAULT_AUDIO_KBPS: u32 = 128;
+/// Wie FFmpegUtils.AudioOnlyBitrateKbps im Backend
+pub const AUDIO_ONLY_KBPS: u32 = 192;
 
-/// Sucht ein Programm im PATH und in den üblichen Homebrew-Ordnern.
+/// Hardware-Encoder in der Reihenfolge, in der sie probiert werden.
+/// Ob einer wirklich funktioniert, prüft ein kurzer Test-Encode (siehe lib.rs):
+/// ffmpeg listet z. B. h264_nvenc auch ohne NVIDIA-Karte.
+pub const HWS: &[&str] = &[
+    "h264_videotoolbox", // Apple
+    "h264_nvenc",        // NVIDIA
+    "h264_qsv",          // Intel Quick Sync
+    "h264_amf",          // AMD
+];
+
+/// Sucht ein Programm im PATH und in den üblichen Installationsordnern.
 /// Aus dem Finder gestartete Apps erben den PATH der Shell nicht.
 pub fn find_tool(name: &str) -> Option<PathBuf> {
+    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
-    for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
-        dirs.push(PathBuf::from(extra));
+    if cfg!(windows) {
+        // winget legt Verknüpfungen hier ab; viele Anleitungen entpacken nach C:\ffmpeg
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            dirs.push(PathBuf::from(local).join("Microsoft").join("WinGet").join("Links"));
+        }
+        dirs.push(PathBuf::from(r"C:\ffmpeg\bin"));
+        dirs.push(PathBuf::from(r"C:\Program Files\ffmpeg\bin"));
+    } else {
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+            dirs.push(PathBuf::from(extra));
+        }
     }
-    dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file())
+    dirs.into_iter().map(|d| d.join(&file)).find(|p| p.is_file())
 }
 
-/// Wählt VideoToolbox, wenn ffmpeg es kennt, sonst libx264.
-pub fn pick_encoder(encoders_listing: &str) -> &'static str {
-    let has_hw = encoders_listing
+/// Hardware-Encoder, die ffmpeg laut `ffmpeg -encoders` kennt, in Probier-Reihenfolge.
+pub fn listed_hw_encoders(encoders_listing: &str) -> Vec<&'static str> {
+    let listed: Vec<&str> = encoders_listing
         .lines()
-        .any(|line| line.split_whitespace().nth(1) == Some(HW_ENCODER));
-    if has_hw {
-        HW_ENCODER
-    } else {
-        SW_ENCODER
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .collect();
+    HWS.iter().copied().filter(|e| listed.contains(e)).collect()
+}
+
+/// Encoder-spezifische Einstellungen.
+pub fn encoder_args(encoder: &str) -> &'static [&'static str] {
+    match encoder {
+        // -bf 0: NVENC mit B-Frames verschiebt bei 29,97-fps-Quellen die Zeitstempel,
+        // viele Player zeigen dann nur ein graues Bild (siehe Backend FFmpegUtils)
+        "h264_nvenc" => &["-preset", "p4", "-bf", "0"],
+        "h264_qsv" => &["-preset", "veryfast"],
+        "h264_amf" => &["-quality", "speed"],
+        "libx264" => &["-preset", "veryfast"],
+        _ => &[],
+    }
+}
+
+/// Argumente für einen winzigen Test-Encode, der zeigt, ob ein Encoder auf diesem Rechner läuft.
+pub fn encoder_test_args(encoder: &str) -> Vec<String> {
+    let mut a: Vec<String> = ["-v", "error", "-f", "lavfi", "-i", "color=size=320x240:duration=0.2", "-c:v", encoder]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    a.extend(encoder_args(encoder).iter().map(|s| s.to_string()));
+    a.extend(["-f", "null", "-"].iter().map(|s| s.to_string()));
+    a
+}
+
+pub fn is_hardware(encoder: &str) -> bool {
+    HWS.contains(&encoder)
+}
+
+/// Lesbarer Name für die Oberfläche.
+pub fn encoder_label(encoder: &str) -> &'static str {
+    match encoder {
+        "h264_videotoolbox" => "Apple VideoToolbox",
+        "h264_nvenc" => "NVIDIA NVENC",
+        "h264_qsv" => "Intel Quick Sync",
+        "h264_amf" => "AMD AMF",
+        _ => "libx264",
     }
 }
 
@@ -126,9 +184,16 @@ pub struct ExportRequest {
     pub fps: Option<f64>,
     /// kbit/s
     pub bitrate: Option<u32>,
-    /// kbit/s für AAC, Standard 160
+    /// kbit/s für AAC, Standard 128
     #[serde(default)]
     pub audio_bitrate: Option<u32>,
+    /// "both" (Standard), "video" (ohne Ton) oder "audio" (nur Ton als MP3)
+    #[serde(default = "default_streams")]
+    pub streams: String,
+}
+
+fn default_streams() -> String {
+    "both".into()
 }
 
 impl ExportRequest {
@@ -169,10 +234,24 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
     let volume_changed = (req.volume - 1.0).abs() > 1e-3;
     let audio_bitrate = format!("{}k", req.audio_bitrate.unwrap_or(DEFAULT_AUDIO_KBPS).clamp(32, 320));
     let volume_filter = format!("volume={}", num(req.volume));
+    let with_audio = req.streams != "video";
+
+    if req.streams == "audio" {
+        // Nur die Tonspur des Ausschnitts als MP3
+        push(&["-map", "0:a:0", "-vn", "-af", &volume_filter, "-c:a", "libmp3lame"]);
+        push(&["-b:a", &format!("{AUDIO_ONLY_KBPS}k"), "-f", "mp3", &req.output]);
+        return Ok(a);
+    }
 
     if req.copy {
-        push(&["-map", "0:v:0", "-map", "0:a?", "-c", "copy"]);
-        if volume_changed {
+        push(&["-map", "0:v:0"]);
+        if with_audio {
+            push(&["-map", "0:a?"]);
+        }
+        push(&["-c", "copy"]);
+        if !with_audio {
+            push(&["-an"]);
+        } else if volume_changed {
             push(&["-af", &volume_filter, "-c:a", "aac", "-b:a", &audio_bitrate]);
         }
         push(&["-avoid_negative_ts", "make_zero"]);
@@ -185,14 +264,16 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
             push(&["-fpsmax", &num(fps)]);
         }
         push(&["-c:v", encoder, "-b:v", &format!("{bitrate}k")]);
-        if encoder == SW_ENCODER {
-            push(&["-preset", "veryfast"]);
-        }
+        push(encoder_args(encoder));
         push(&["-pix_fmt", "yuv420p"]);
-        if volume_changed {
-            push(&["-af", &volume_filter]);
+        if !with_audio {
+            push(&["-an"]);
+        } else {
+            if volume_changed {
+                push(&["-af", &volume_filter]);
+            }
+            push(&["-c:a", "aac", "-b:a", &audio_bitrate]);
         }
-        push(&["-c:a", "aac", "-b:a", &audio_bitrate]);
     }
 
     if req.output.to_lowercase().ends_with(".mp4") || req.output.to_lowercase().ends_with(".mov") {
@@ -236,6 +317,7 @@ mod tests {
             fps: Some(30.0),
             bitrate: Some(2500),
             audio_bitrate: None,
+            streams: "both".into(),
         }
     }
 
@@ -243,16 +325,49 @@ mod tests {
         args.join(" ")
     }
 
+    const HW: &str = "h264_videotoolbox";
+
     #[test]
-    fn picks_videotoolbox_when_listed() {
-        let listing = " V....D libx264              libx264 H.264\n V....D h264_videotoolbox    VideoToolbox H.264 Encoder (codec h264)\n";
-        assert_eq!(pick_encoder(listing), HW_ENCODER);
+    fn lists_hardware_encoders_in_priority_order() {
+        let listing = " V....D libx264              libx264 H.264\n V....D h264_nvenc           NVIDIA NVENC\n V....D h264_videotoolbox    VideoToolbox H.264 Encoder (codec h264)\n";
+        assert_eq!(listed_hw_encoders(listing), vec!["h264_videotoolbox", "h264_nvenc"]);
     }
 
     #[test]
-    fn falls_back_to_libx264() {
+    fn ignores_hevc_and_unknown_encoders() {
         let listing = " V....D libx264              libx264 H.264\n V....D hevc_videotoolbox    VideoToolbox H.265\n";
-        assert_eq!(pick_encoder(listing), SW_ENCODER);
+        assert!(listed_hw_encoders(listing).is_empty());
+    }
+
+    #[test]
+    fn nvenc_gets_no_b_frames() {
+        let s = joined(&build_args(&request(), "h264_nvenc").unwrap());
+        assert!(s.contains("-c:v h264_nvenc -b:v 2500k -preset p4 -bf 0"), "{s}");
+    }
+
+    #[test]
+    fn test_encode_uses_encoder_specific_args() {
+        let s = encoder_test_args("h264_nvenc").join(" ");
+        assert!(s.contains("-c:v h264_nvenc -preset p4 -bf 0 -f null -"));
+    }
+
+    #[test]
+    fn video_only_drops_audio() {
+        let req = ExportRequest { streams: "video".into(), volume: 1.5, ..request() };
+        let s = joined(&build_args(&req, HW).unwrap());
+        assert!(s.contains(" -an "));
+        assert!(!s.contains("-c:a"));
+        let copy = ExportRequest { streams: "video".into(), copy: true, ..request() };
+        let s = joined(&build_args(&copy, HW).unwrap());
+        assert!(s.contains("-map 0:v:0 -c copy -an"), "{s}");
+    }
+
+    #[test]
+    fn audio_only_writes_mp3() {
+        let req = ExportRequest { streams: "audio".into(), output: "/v/out.mp3".into(), ..request() };
+        let s = joined(&build_args(&req, HW).unwrap());
+        assert!(s.contains("-map 0:a:0 -vn -af volume=1 -c:a libmp3lame -b:a 192k -f mp3 /v/out.mp3"), "{s}");
+        assert!(!s.contains("-c:v"));
     }
 
     #[test]
@@ -309,7 +424,7 @@ mod tests {
 
     #[test]
     fn encode_args_use_encoder_scale_fps_and_bitrate() {
-        let args = build_args(&request(), HW_ENCODER).unwrap();
+        let args = build_args(&request(), HW).unwrap();
         let s = joined(&args);
         assert!(s.contains("-ss 1.5 -to 4 -i /v/in.mp4"), "{s}");
         assert!(s.contains("-vf scale=1280:720"));
@@ -329,21 +444,21 @@ mod tests {
 
     #[test]
     fn audio_bitrate_defaults_to_160_and_can_be_lowered() {
-        assert!(joined(&build_args(&request(), HW_ENCODER).unwrap()).contains("-c:a aac -b:a 160k"));
+        assert!(joined(&build_args(&request(), HW).unwrap()).contains("-c:a aac -b:a 128k"));
         let low = ExportRequest { audio_bitrate: Some(64), ..request() };
-        assert!(joined(&build_args(&low, HW_ENCODER).unwrap()).contains("-c:a aac -b:a 64k"));
+        assert!(joined(&build_args(&low, HW).unwrap()).contains("-c:a aac -b:a 64k"));
     }
 
     #[test]
     fn volume_adds_audio_filter() {
         let req = ExportRequest { volume: 1.5, ..request() };
-        assert!(joined(&build_args(&req, HW_ENCODER).unwrap()).contains("-af volume=1.5"));
+        assert!(joined(&build_args(&req, HW).unwrap()).contains("-af volume=1.5"));
     }
 
     #[test]
     fn copy_mode_keeps_streams() {
         let req = ExportRequest { copy: true, bitrate: None, width: None, height: None, fps: None, ..request() };
-        let s = joined(&build_args(&req, HW_ENCODER).unwrap());
+        let s = joined(&build_args(&req, HW).unwrap());
         assert!(s.contains("-map 0:v:0 -map 0:a? -c copy"));
         assert!(s.contains("-avoid_negative_ts make_zero"));
         assert!(!s.contains("-c:v h264_videotoolbox"));
@@ -353,24 +468,24 @@ mod tests {
     #[test]
     fn copy_mode_reencodes_only_audio_when_volume_changes() {
         let req = ExportRequest { copy: true, volume: 0.5, ..request() };
-        let s = joined(&build_args(&req, HW_ENCODER).unwrap());
+        let s = joined(&build_args(&req, HW).unwrap());
         assert!(s.contains("-c copy -af volume=0.5 -c:a aac"));
     }
 
     #[test]
     fn rejects_invalid_requests() {
-        assert!(build_args(&ExportRequest { start: -1.0, ..request() }, HW_ENCODER).is_err());
-        assert!(build_args(&ExportRequest { end: 1.5, ..request() }, HW_ENCODER).is_err());
-        assert!(build_args(&ExportRequest { volume: -0.1, ..request() }, HW_ENCODER).is_err());
-        assert!(build_args(&ExportRequest { output: "/v/in.mp4".into(), ..request() }, HW_ENCODER).is_err());
-        assert!(build_args(&ExportRequest { bitrate: None, ..request() }, HW_ENCODER).is_err());
+        assert!(build_args(&ExportRequest { start: -1.0, ..request() }, HW).is_err());
+        assert!(build_args(&ExportRequest { end: 1.5, ..request() }, HW).is_err());
+        assert!(build_args(&ExportRequest { volume: -0.1, ..request() }, HW).is_err());
+        assert!(build_args(&ExportRequest { output: "/v/in.mp4".into(), ..request() }, HW).is_err());
+        assert!(build_args(&ExportRequest { bitrate: None, ..request() }, HW).is_err());
     }
 
     #[test]
     fn faststart_only_for_mp4_and_mov() {
         let mkv = ExportRequest { copy: true, output: "/v/out.mkv".into(), ..request() };
-        assert!(!joined(&build_args(&mkv, HW_ENCODER).unwrap()).contains("faststart"));
-        assert!(joined(&build_args(&request(), HW_ENCODER).unwrap()).contains("-movflags +faststart"));
+        assert!(!joined(&build_args(&mkv, HW).unwrap()).contains("faststart"));
+        assert!(joined(&build_args(&request(), HW).unwrap()).contains("-movflags +faststart"));
     }
 
     #[test]

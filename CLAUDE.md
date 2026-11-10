@@ -2,8 +2,10 @@
 
 Videos schneiden und verkleinern. Eine React-Oberfläche, zwei Betriebsarten:
 
-- **Desktop (Tauri 2):** Rust ruft ffmpeg direkt auf der lokalen Datei auf, mit VideoToolbox-Hardware-Encoding auf dem Mac.
-- **Web:** Upload an ein Scala/Play-Backend, das ffmpeg im Docker-Container ausführt.
+- **Desktop (Tauri 2, macOS + Windows):** Rust ruft ffmpeg direkt auf der lokalen Datei auf, mit Hardware-Encoding (VideoToolbox, NVENC, Quick Sync, AMF).
+- **Web:** Upload an ein Scala/Play-Backend, das ffmpeg im Docker-Container ausführt (optional NVENC über `docker-compose.gpu.yml`, Windows-Start per `start-trimly.bat`).
+
+Florian nutzt beides: Mac (M5) und Windows mit NVIDIA-Karte.
 
 ## Aufbau
 
@@ -18,41 +20,47 @@ Videos schneiden und verkleinern. Eine React-Oberfläche, zwei Betriebsarten:
 ### Frontend (`frontend/src/`)
 
 - `App.js`: gesamter Zustand. Video öffnen, Wiedergabe (rAF-Abspielkopf, stoppt am Ausschnittende), Tastenkürzel, Export.
-- `components/Timeline.js`: Filmstreifen. Vorschaubilder werden mit einem versteckten `<video>` per Seek direkt in einen Canvas gezeichnet, ohne Auslesen, damit auch Tauri-Asset-URLs funktionieren. Griffe sind `role="slider"` und per Pfeiltasten bedienbar.
-- `lib/presets.js`: **einzige Quelle für Qualitätsstufen.** `resolveTarget` rechnet Preset und Quelle in `{copy, width, height, fps, bitrate, audioBitrate, capped}` um: `height` = kürzere Seite, nie hochskalieren, gerade Kanten, **Video- und Tonbitrate nie über dem Original** (sonst wird z. B. eine 100-kbit/s-Vorlesung beim Kodieren größer). `estimateBytes` liefert die Größenschätzung.
+- `components/Timeline.js`: Filmstreifen. Vorschaubilder werden mit einem versteckten `<video>` per Seek direkt in einen Canvas gezeichnet (ohne Auslesen). **Kurzer Klick auf einen Griff springt nur dorthin, erst nach `HOLD_MS` Gedrückthalten wird er verschiebbar** (Wunsch von Florian). Griffe sind `role="slider"` und per Pfeiltasten bedienbar. Mindestlänge 0,01 s.
+- `lib/presets.js`: **einzige Quelle für Qualitätsstufen.** `resolveTarget` rechnet Preset und Quelle in `{copy, width, height, fps, bitrate, audioBitrate, capped}` um: `height` = kürzere Seite, nie hochskalieren, gerade Kanten, **Video- und Tonbitrate nie über dem Original** (sonst wird z. B. eine 100-kbit/s-Vorlesung beim Kodieren größer). `estimateBytes` liefert die Größenschätzung je Ausgabe (`OUTPUTS`: both/video/audio). Tonbitraten 128 kbit/s AAC, 192 kbit/s MP3 – müssen zu Backend (`VideoCalculator.AudioBitrateKbps`, `FFmpegUtils.AudioOnlyBitrateKbps`) und `ffmpeg.rs` passen.
 - `platform/`: `index.js` wählt per `"__TAURI_INTERNALS__" in window` zwischen `web.js` (HTTP an das Backend) und `desktop.js` (Tauri `invoke`). `desktop.js` wird nur dynamisch importiert, damit Jest die Tauri-ESM-Pakete nie lädt. Beide Module haben dieselbe Schnittstelle, beschrieben in `index.js`.
 - Design-Tokens in `index.css`: Nachtblau, Glasflächen (`--glass-blur`), Blau-Violett-Verlauf für Aktionen, Orange `--trim` für die Schnittklammer. Hintergrund `.backdrop` mit drei weichgezeichneten, langsam treibenden Farbflecken (steht bei „Bewegung reduzieren“). Systemschrift, Zahlen mit `tabular-nums`.
 - Abmessungen kommen auf dem Desktop von ffprobe (`video.ref.info`), nicht vom `<video>`-Element.
 - „Anderes Video“ ruft `resetAll()` auf (alles inkl. Einstellungen zurück). Der Arbeitsbereich hat `key={video.src}`, damit Player und Filmstreifen pro Video neu entstehen.
+- Nach einem Export tritt der Export-Knopf zurück (`.btn-primary.is-done`), bis sich eine Einstellung ändert.
+- `web.js` folgt dem Backend-Protokoll: `mode=original|custom`, `output=both|video|audio`, bei `status: "missing"` Original neu hochladen und erneut senden, `/check` liefert `status` ready/computing/error/unknown, Download per Direktlink mit `?name=` (kein RAM-Puffer).
+- `src/editor/` (Editor-Tab: Clips, Tonspur, Overlays, Zoom, `POST /render`) stammt aus dem Oktober-Stand und ist **noch nicht in die neue Oberfläche eingebunden** – offenes Feature. `src/presets.js` gehört dazu.
 
 ### Desktop (`frontend/src-tauri/src/`)
 
-- `ffmpeg.rs`: reine Logik ohne Prozesse. `find_tool` (PATH + `/opt/homebrew/bin` + `/usr/local/bin`, weil Finder-Apps den Shell-PATH nicht erben), `pick_encoder`, `parse_probe`, `build_args`, `progress_from_line` (liest `-progress pipe:1`).
+- `ffmpeg.rs`: reine Logik ohne Prozesse. `find_tool` (PATH + Homebrew-Ordner, weil Finder-Apps den Shell-PATH nicht erben; unter Windows `.exe`, winget-Links, `C:\ffmpeg\bin`), `listed_hw_encoders` + `encoder_test_args` (Hardware-Encoder werden per Test-Encode geprüft, ffmpeg listet NVENC auch ohne Karte), `encoder_args` (**NVENC immer mit `-bf 0`**, sonst graues Bild bei 29,97 fps), `parse_probe`, `build_args` (`streams` both/video/audio), `progress_from_line`.
 - `media_server.rs`: Vorschau-Videos laufen über einen eigenen HTTP-Server auf `127.0.0.1` (Zufallsport, Token in der URL, nur per `media_url` freigegebene Dateien). **Nicht zurück zum Tauri-Asset-Protokoll wechseln:** Es beantwortet Ranges mit höchstens 1 MB, und bei langen Videos ist der `moov`-Index größer, dann zeigt WebKit nur 0 × 0 ohne Bild.
-- `lib.rs`: Tauri-Commands `encoder_info`, `initial_file` (`Trimly video.mp4` öffnet direkt), `frontend_log` (UI-Meldungen nach stderr, nützlich zur Fehlersuche ohne Fenster), `probe`, `media_url`, `export_video` (Fortschritt über `Channel<f64>`), `cancel_export`. Es läuft höchstens ein Export gleichzeitig. Abbruch liefert den Fehler `"cancelled"`, den das Frontend still schluckt.
+- `lib.rs`: Tauri-Commands `encoder_info`, `initial_file`, `frontend_log` (UI-Meldungen nach stderr, nützlich zur Fehlersuche ohne Fenster), `probe`, `media_url`, `export_video` (Fortschritt über `Channel<f64>`; scheitert ein Hardware-Encoder, automatisch neuer Versuch mit libx264), `cancel_export`. Es läuft höchstens ein Export gleichzeitig. Abbruch liefert den Fehler `"cancelled"`, den das Frontend still schluckt. `TRIMLY_ENCODER=cpu` erzwingt libx264.
+- „Öffnen mit“: `bundle.fileAssociations` (Rolle Viewer, Rang `Alternate` → nie Standardprogramm). Windows übergibt die Datei als Startargument, macOS als `RunEvent::Opened` → wird in `PendingFile` gemerkt und als Event `open-file` gemeldet; die UI holt sie per `initial_file` ab (liefert jede Datei nur einmal). Testen auf dem Mac: `open --stderr log.txt -a …/Trimly.app video.mp4`. Windows ist ungetestet; eine zweite Datei startet dort eine zweite Instanz (kein Single-Instance-Plugin).
 - Fehlersuche ohne Bildschirmzugriff: `cargo build && ./target/debug/trimly /pfad/video.mp4 2>&1 | grep '\[ui\]'` (Debug-Build lädt die UI von `localhost:3000`).
 - `tauri.conf.json`: macOS-Titelleiste als Overlay (`.is-desktop .topbar` lässt 84 px für die Ampel-Knöpfe frei).
 
 ### Backend (`backend/app/video/`)
 
 - `VideoController.scala`: HTTP-Endpunkte (siehe `conf/routes`).
-- `VideoService.scala`: Dateiablage, Status-Map (`Computing`/`Ready`/`Failed`), Aufräum-Timer. Der Zustand liegt **nur im Speicher**.
-- `VideoCalculator.scala`: füllt fehlende Parameter aus ffprobe auf, validiert Start/Ende, deckelt die Bitrate (`normalBitrate`). Die untere Hälfte ist auskommentierter Altcode.
-- `FFmpegUtils.scala`: `getVideoInfo` und `processVideo` (fest `libx264`).
+- `VideoService.scala`: Dateiablage, Status-Map (`Computing`/`Ready`/`Failed(msg)`), Aufräum-Timer, `/keepalive` für den Editor. Der Zustand liegt **nur im Speicher**.
+- `VideoCalculator.scala`: füllt fehlende Parameter aus ffprobe auf, validiert Start/Ende, deckelt die Bitrate.
+- `FFmpegUtils.scala`: `trimVideo` (Original-Modus, `-c copy`), `extractAudio` (MP3), `processVideo` (NVENC mit CUDA-Dekodierung, wenn der Test-Encode klappt, sonst/Fallback libx264 veryfast).
+- `EditRenderer.scala`: Filtergraph für den Editor (`POST /render`).
 
 ### API (nur Web)
 
 | Route | Zweck |
 |---|---|
 | `POST /store` | Multipart `video` → `{originalId}` |
-| `POST /process` | `originalId`, `startTime`/`endTime` (ms), `volume`, `framerate`, `bitrate` (kbit/s), `resolution` (`BxH`) → `{filename}`; ffmpeg läuft im Hintergrund |
-| `GET /check/:filename` | `{exists, size}` oder `{exists: false, failed: true, message}` |
-| `GET /download/:filename` | fertige Datei |
+| `POST /process` | `originalId`, `mode` (`original` = nur schneiden), `output` (`both`/`video`/`audio`), `startTime`/`endTime` (ms), `volume`, `framerate`, `bitrate` (kbit/s), `resolution` (`BxH`) → `{filename}`; unbekanntes Original → 404 `{status: "missing"}` |
+| `GET /check/:filename` | `{status: ready, size}` / `computing` / `error` + `message` / `unknown` |
+| `GET /download/:filename?name=` | fertige Datei, gestreamt, mit Wunsch-Dateiname |
+| `POST /render`, `POST /keepalive` | Editor |
 | `POST /upload` | Legacy, vom Frontend nicht mehr benutzt |
 
 ## Starten und testen
 
-Node, Rust und ffmpeg sind lokal per Homebrew installiert, sbt nur im Backend-Container.
+Auf dem Mac sind Node, Rust und ffmpeg per Homebrew installiert, sbt nur im Backend-Container. **Vor Arbeiten `git pull` bzw. `git fetch` prüfen** – der Stand wird auch von einem Windows-Rechner gepusht; im November 2026 fehlten hier lokal 7 Commits.
 
 ```bash
 cd frontend && npm run desktop                  # Desktop-App mit Hot Reload
@@ -72,9 +80,9 @@ README-Screenshots in `docs/images/` stammen von Playwright/WebKit gegen `docker
 
 ## Bekannte Baustellen
 
-- `maxSizeMb` gibt es im Backend noch, das neue Frontend sendet es nicht. Ein echtes Größenlimit fehlt.
-- Das Backend kodiert immer mit libx264. Im Linux-Container gibt es kein VideoToolbox.
-- „Nur schneiden" gibt es nur in der Desktop-App.
+- Editor-Tab ist nicht in die neue Oberfläche eingebunden (siehe oben); in der Desktop-App bräuchte er eine Rust-Variante von `/render`.
+- Windows-Build und „Öffnen mit“ unter Windows sind ungetestet (kein Windows-Rechner in der Entwicklungsumgebung).
+- Im Linux-Container gibt es kein VideoToolbox; der Server kann nur NVENC oder CPU.
 - Die Web-Version kennt die Bildrate der Quelle nicht und sendet die Preset-fps unverändert.
 - `backend/test/resources/testVideo.mp4` (63 MB) liegt im Git-Repo.
 - `backend/build.sc` (Mill) und `.g8/` sind Überbleibsel; gebaut wird mit sbt.

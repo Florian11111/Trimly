@@ -97,6 +97,19 @@
   box-shadow: 0 10px 34px -8px rgba(110, 100, 255, 0.95);
 }
 
+/* Nach dem Export: Knopf tritt zurück, bis sich etwas ändert */
+.btn-primary.is-done {
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(138, 92, 255, 0.45);
+}
+
+.btn-primary.is-done:not(:disabled):hover {
+  filter: none;
+  background: rgba(138, 92, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(138, 92, 255, 0.7);
+}
+
 .btn-quiet {
   border-color: var(--line);
   color: var(--text);
@@ -341,6 +354,22 @@ kbd {
   transform: translate(-50%, -50%);
 }
 
+.timeline-handle {
+  transition: box-shadow 0.15s, filter 0.15s;
+}
+
+.is-grabbing-start .timeline-handle-start,
+.is-grabbing-end .timeline-handle-end {
+  filter: brightness(1.15);
+  box-shadow: 0 0 0 3px rgba(255, 169, 94, 0.35), 0 0 18px rgba(255, 169, 94, 0.6);
+  cursor: grabbing;
+}
+
+.is-grabbing-start,
+.is-grabbing-end {
+  cursor: grabbing;
+}
+
 .timeline-handle-start {
   left: -14px;
   border-radius: var(--radius-s) 0 0 var(--radius-s);
@@ -405,6 +434,47 @@ kbd {
 .value {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.segment {
+  position: relative;
+  padding: 6px 4px;
+  border-radius: var(--radius-s);
+  font-size: 12px;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segment input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segment.is-active {
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(138, 92, 255, 0.5);
+}
+
+.segment:has(input:disabled) {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.segment:has(input:focus-visible) {
+  outline: 2px solid var(--trim);
+  outline-offset: -2px;
 }
 
 .choices {

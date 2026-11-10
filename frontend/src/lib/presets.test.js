@@ -11,7 +11,7 @@ describe("resolveTarget", () => {
       height: 720,
       fps: 30,
       bitrate: 2500,
-      audioBitrate: 160,
+      audioBitrate: 128,
       capped: false,
     });
   });
@@ -44,7 +44,7 @@ describe("resolveTarget", () => {
 
   test("custom with height 0 keeps the original resolution", () => {
     const t = resolveTarget(findPreset("custom"), { height: 0, fps: "24", bitrate: "8000" }, landscape);
-    expect(t).toEqual({ copy: false, width: 2560, height: 1440, fps: 24, bitrate: 8000, audioBitrate: 160, capped: false });
+    expect(t).toEqual({ copy: false, width: 2560, height: 1440, fps: 24, bitrate: 8000, audioBitrate: 128, capped: false });
   });
 
   test("never raises the bitrate above the source", () => {
@@ -57,6 +57,7 @@ describe("resolveTarget", () => {
   test("never raises the audio bitrate above the source", () => {
     const lecture = { width: 1280, height: 720, fps: 25, videoKbps: 103, audioKbps: 65 };
     expect(resolveTarget(findPreset("medium"), {}, lecture).audioBitrate).toBe(65);
+    expect(resolveTarget(findPreset("medium"), {}, { ...lecture, audioKbps: 320 }).audioBitrate).toBe(128);
   });
 
   test("keeps the preset bitrate when the source is richer", () => {
@@ -72,8 +73,14 @@ describe("resolveTarget", () => {
 describe("estimateBytes", () => {
   test("uses video plus audio bitrate for encoded output", () => {
     const target = { copy: false, bitrate: 2500 };
-    // (2500 + 160) kbit/s * 8 s / 8 = 2 660 000 Bytes
-    expect(estimateBytes(target, 8, landscape)).toBe(2_660_000);
+    // (2500 + 128) kbit/s * 8 s / 8 = 2 628 000 Bytes
+    expect(estimateBytes(target, 8, landscape)).toBe(2_628_000);
+  });
+
+  test("leaves out the audio for video-only and uses MP3 bitrate for audio-only", () => {
+    const target = { copy: false, bitrate: 2500, audioBitrate: 128 };
+    expect(estimateBytes(target, 8, landscape, "video")).toBe(2_500_000);
+    expect(estimateBytes(target, 8, landscape, "audio")).toBe(192_000);
   });
 
   test("scales the original size for copy mode", () => {
@@ -85,9 +92,8 @@ describe("estimateBytes", () => {
   });
 });
 
-test("the web version hides desktop-only presets", () => {
-  expect(presetsFor(false).map((p) => p.id)).not.toContain("copy");
-  expect(presetsFor(true).map((p) => p.id)).toContain("copy");
+test("both platforms offer the original (copy) preset", () => {
+  expect(presetsFor().map((p) => p.id)).toContain("copy");
 });
 
 test("unknown preset ids fall back to medium", () => {

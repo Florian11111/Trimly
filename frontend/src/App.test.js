@@ -38,12 +38,23 @@ test("uploads a chosen video to /store and shows the editor", async () => {
   expect(screen.getByRole("button", { name: "Exportieren und herunterladen" })).toBeInTheDocument();
 });
 
-test("the web version offers no copy-only preset", async () => {
+test("the web version offers the original preset and all output modes", async () => {
   await renderReady();
   chooseFile(video());
   await screen.findByText("clip.mp4");
-  expect(screen.queryByLabelText(/Nur schneiden/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/Original/)).toBeInTheDocument();
   expect(screen.getByLabelText(/Mittel/)).toBeChecked();
+  expect(screen.getByLabelText("Video mit Ton")).toBeChecked();
+  expect(screen.getByLabelText("Nur Video")).toBeInTheDocument();
+});
+
+test("audio-only output hides the quality choices", async () => {
+  await renderReady();
+  chooseFile(video());
+  await screen.findByText("clip.mp4");
+  fireEvent.click(screen.getByLabelText("Nur Ton (MP3)"));
+  expect(screen.queryByLabelText(/Mittel/)).not.toBeInTheDocument();
+  expect(screen.getByText("MP3, 192 kbit/s")).toBeInTheDocument();
 });
 
 test("rejects files that are not videos with a clear message", async () => {

@@ -3,10 +3,9 @@
 export const PRESETS = [
   {
     id: "copy",
-    label: "Nur schneiden",
-    hint: "Ohne Neukodierung, in Sekunden fertig",
+    label: "Original",
+    hint: "Nur schneiden, in Sekunden fertig",
     copy: true,
-    desktopOnly: true,
   },
   { id: "small", label: "Klein", hint: "480p, 30 fps", height: 480, fps: 30, bitrate: 1000 },
   { id: "medium", label: "Mittel", hint: "720p, 30 fps", height: 720, fps: 30, bitrate: 2500 },
@@ -26,10 +25,19 @@ export const CUSTOM_HEIGHTS = [
 
 export const DEFAULT_CUSTOM = { height: 0, fps: 30, bitrate: 4000 };
 
-export const AUDIO_KBPS = 160;
+// Muss zu VideoCalculator.AudioBitrateKbps / FFmpegUtils.AudioOnlyBitrateKbps
+// im Backend und zu ffmpeg.rs passen
+export const AUDIO_KBPS = 128;
+export const AUDIO_ONLY_KBPS = 192;
 
-export function presetsFor(desktop) {
-  return PRESETS.filter((p) => desktop || !p.desktopOnly);
+export const OUTPUTS = [
+  { id: "both", label: "Video mit Ton" },
+  { id: "video", label: "Nur Video" },
+  { id: "audio", label: "Nur Ton (MP3)" },
+];
+
+export function presetsFor() {
+  return PRESETS;
 }
 
 export function findPreset(id) {
@@ -77,10 +85,15 @@ export function sourceVideoKbps(info, size, duration) {
 }
 
 /** Geschätzte Dateigröße in Bytes für einen Ausschnitt von `clipSeconds`. */
-export function estimateBytes(target, clipSeconds, source) {
+export function estimateBytes(target, clipSeconds, source, output = "both") {
   if (!target || clipSeconds <= 0) return 0;
+  const kbpsToBytes = (kbps) => (kbps * 1000 * clipSeconds) / 8;
+  if (output === "audio") return kbpsToBytes(AUDIO_ONLY_KBPS);
   if (target.copy) {
-    return source.duration > 0 ? (source.size * clipSeconds) / source.duration : 0;
+    const share = source.duration > 0 ? (source.size * clipSeconds) / source.duration : 0;
+    // ohne Ton fällt dessen Anteil weg
+    return output === "video" ? Math.max(0, share - kbpsToBytes(source.audioKbps || 0)) : share;
   }
-  return ((target.bitrate + (target.audioBitrate || AUDIO_KBPS)) * 1000 * clipSeconds) / 8;
+  const audio = output === "video" ? 0 : target.audioBitrate || AUDIO_KBPS;
+  return kbpsToBytes(target.bitrate + audio);
 }

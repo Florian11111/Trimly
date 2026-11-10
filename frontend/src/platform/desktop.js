@@ -1,4 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { videoDir } from "@tauri-apps/api/path";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -6,8 +8,10 @@ import { fileExtension, fileStem } from "../lib/format";
 
 const VIDEO_EXTENSIONS = ["mp4", "mov", "m4v", "mkv", "webm", "avi"];
 
-const baseName = (path) => path.slice(path.lastIndexOf("/") + 1);
-const dirName = (path) => path.slice(0, path.lastIndexOf("/") + 1);
+// Windows-Pfade nutzen „\\“, macOS „/“
+const lastSep = (path) => Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+const baseName = (path) => path.slice(lastSep(path) + 1);
+const dirName = (path) => path.slice(0, lastSep(path) + 1);
 
 const asError = (e) => (e instanceof Error ? e : new Error(String(e)));
 
@@ -16,9 +20,12 @@ export function createDesktopPlatform() {
     kind: "desktop",
 
     async pick() {
+      // Erster Dialog startet im Videos-Ordner, danach merkt sich das System den letzten
+      const defaultPath = await videoDir().catch(() => undefined);
       const path = await open({
         multiple: false,
         directory: false,
+        defaultPath,
         filters: [{ name: "Video", extensions: VIDEO_EXTENSIONS }],
       });
       return typeof path === "string" ? path : null;
@@ -44,11 +51,12 @@ export function createDesktopPlatform() {
     },
 
     async exportVideo(video, job, { onProgress } = {}) {
-      const { start, end, volume, target } = job;
-      const ext = target.copy ? fileExtension(video.name) || "mp4" : "mp4";
+      const { start, end, volume, target, output: outputMode } = job;
+      const ext =
+        outputMode === "audio" ? "mp3" : target.copy ? fileExtension(video.name) || "mp4" : "mp4";
       const output = await save({
         defaultPath: `${dirName(video.ref.path)}${fileStem(video.name)}_trim.${ext}`,
-        filters: [{ name: "Video", extensions: [ext] }],
+        filters: [{ name: outputMode === "audio" ? "Audio" : "Video", extensions: [ext] }],
       });
       if (!output) return null;
 
@@ -70,6 +78,7 @@ export function createDesktopPlatform() {
             fps: target.fps ?? null,
             bitrate: target.bitrate ?? null,
             audioBitrate: target.audioBitrate ?? null,
+            streams: outputMode,
           },
           onProgress: channel,
         });
@@ -79,8 +88,16 @@ export function createDesktopPlatform() {
       }
     },
 
+    // Datei, mit der die App gestartet wurde („Öffnen mit“, Doppelklick, Startargument)
     async initialFile() {
       return invoke("initial_file");
+    },
+
+    // macOS: „Öffnen mit Trimly“, während die App schon läuft
+    async onOpenFile(handler) {
+      return listen("open-file", () => {
+        invoke("initial_file").then((path) => path && handler(path));
+      });
     },
 
     log(message) {

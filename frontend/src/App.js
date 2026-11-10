@@ -5,6 +5,7 @@ import { formatBytes, formatTime } from "./lib/format";
 import {
   CUSTOM_HEIGHTS,
   DEFAULT_CUSTOM,
+  OUTPUTS,
   estimateBytes,
   findPreset,
   presetsFor,
@@ -14,6 +15,7 @@ import {
 import { isDesktop, loadPlatform } from "./platform";
 
 const FRAME = 1 / 30;
+const MIN_CLIP = 0.01; // Sekunden
 
 export default function App() {
   const [platform, setPlatform] = useState(null);
@@ -29,6 +31,7 @@ export default function App() {
   const [presetId, setPresetId] = useState("medium");
   const [custom, setCustom] = useState(DEFAULT_CUSTOM);
   const [volume, setVolume] = useState(1);
+  const [output, setOutput] = useState("both"); // both | video | audio
 
   const [job, setJob] = useState(null); // { state: running|done|error, progress, result, message }
   const [dragging, setDragging] = useState(false);
@@ -70,6 +73,7 @@ export default function App() {
     setPresetId("medium");
     setCustom(DEFAULT_CUSTOM);
     setVolume(1);
+    setOutput("both");
     setJob(null);
     if (inputRef.current) inputRef.current.value = "";
   }, []);
@@ -91,8 +95,10 @@ export default function App() {
 
   const chooseFile = async () => {
     if (!platform) return;
-    if (platform.kind === "desktop") openVideo(await platform.pick());
-    else inputRef.current?.click();
+    const picked = await platform.pick();
+    if (picked) openVideo(picked);
+    // null: Web ohne File System Access API → normales Dateifeld; undefined: abgebrochen
+    else if (picked === null && platform.kind === "web") inputRef.current?.click();
   };
 
   // „Anderes Video“: zurück zum Start, dann gleich die Auswahl öffnen
@@ -101,12 +107,24 @@ export default function App() {
     chooseFile();
   };
 
-  // Desktop: Datei aus der Kommandozeile öffnen (`Trimly video.mp4`)
+  // Desktop: Datei aus „Öffnen mit“ oder der Kommandozeile (`Trimly video.mp4`)
   useEffect(() => {
     platform?.initialFile?.().then((path) => path && openVideo(path)).catch(() => {});
     // nur einmal nach dem Laden der Plattform
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platform]);
+
+  // macOS: „Öffnen mit Trimly“, während die App schon läuft
+  useEffect(() => {
+    if (!platform?.onOpenFile) return undefined;
+    let unlisten;
+    let alive = true;
+    platform.onOpenFile((path) => openVideo(path)).then((fn) => (alive ? (unlisten = fn) : fn()));
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [platform, openVideo]);
 
   // Desktop: Drag & Drop aus dem Finder kommt über Tauri, nicht als DOM-Event
   useEffect(() => {
@@ -217,10 +235,10 @@ export default function App() {
   }, [playing]);
 
   const setIn = useCallback(() => {
-    setRange(([, e]) => [Math.min(videoRef.current?.currentTime ?? 0, e - 0.1), e]);
+    setRange(([, e]) => [Math.min(videoRef.current?.currentTime ?? 0, e - MIN_CLIP), e]);
   }, []);
   const setOut = useCallback(() => {
-    setRange(([s]) => [s, Math.max(videoRef.current?.currentTime ?? 0, s + 0.1)]);
+    setRange(([s]) => [s, Math.max(videoRef.current?.currentTime ?? 0, s + MIN_CLIP)]);
   }, []);
 
   useEffect(() => {
@@ -287,7 +305,8 @@ export default function App() {
   );
   const target = source ? resolveTarget(preset, custom, source) : null;
   const clipLength = Math.max(0, range[1] - range[0]);
-  const estimate = source ? estimateBytes(target, clipLength, source) : 0;
+  const estimate = source ? estimateBytes(target, clipLength, source, output) : 0;
+  const hasAudio = video?.ref?.info ? video.ref.info.hasAudio : true;
 
   // Lautstärke im Player mithören (Browser kann nicht über 100 % gehen)
   useEffect(() => {
@@ -297,7 +316,12 @@ export default function App() {
   // Geänderte Einstellungen machen ein altes Ergebnis ungültig
   useEffect(() => {
     setJob((j) => (j?.state === "done" ? null : j));
-  }, [presetId, custom, volume, range]);
+  }, [presetId, custom, volume, range, output]);
+
+  // Video ohne Tonspur: nur Video exportieren
+  useEffect(() => {
+    if (!hasAudio) setOutput("video");
+  }, [hasAudio]);
 
   const runExport = async () => {
     if (!platform || !video || !target) return;
@@ -305,7 +329,7 @@ export default function App() {
     try {
       const result = await platform.exportVideo(
         video,
-        { start: range[0], end: range[1], volume, target },
+        { start: range[0], end: range[1], volume, target, output },
         {
           onProgress: (p) =>
             setJob((j) => (j?.state === "running" ? { ...j, progress: p } : j)),
@@ -442,6 +466,29 @@ export default function App() {
 
           <aside className="panel" aria-label="Export">
             <fieldset className="field">
+              <legend>Ausgabe</legend>
+              <div className="segmented">
+                {OUTPUTS.map((o) => (
+                  <label
+                    key={o.id}
+                    className={`segment ${output === o.id ? "is-active" : ""}`}
+                  >
+                    <input
+                      type="radio"
+                      name="output"
+                      value={o.id}
+                      checked={output === o.id}
+                      onChange={() => setOutput(o.id)}
+                      disabled={running || (!hasAudio && o.id !== "video")}
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            {output !== "audio" && (
+            <fieldset className="field">
               <legend>Qualität</legend>
               <div className="choices">
                 {presets.map((p) => (
@@ -460,8 +507,9 @@ export default function App() {
                 ))}
               </div>
             </fieldset>
+            )}
 
-            {presetId === "custom" && (
+            {output !== "audio" && presetId === "custom" && (
               <div className="custom">
                 <label className="field-inline">
                   <span>Auflösung</span>
@@ -515,12 +563,13 @@ export default function App() {
             </label>
 
             <div className="summary">
-              {target && !target.copy && (
+              {output === "audio" && <p className="summary-line">MP3, 192 kbit/s</p>}
+              {output !== "audio" && target && !target.copy && (
                 <p className="summary-line">
                   {target.width} × {target.height}, {Math.round(target.fps)} fps, {target.bitrate} kbit/s
                 </p>
               )}
-              {target?.capped && (
+              {output !== "audio" && target?.capped && (
                 <p className="summary-line">Bitrate auf die des Originals begrenzt</p>
               )}
               <p className="summary-size">
@@ -551,7 +600,7 @@ export default function App() {
               </div>
             ) : (
               <button
-                className="btn btn-primary btn-block"
+                className={`btn btn-primary btn-block ${job?.state === "done" ? "is-done" : ""}`}
                 onClick={runExport}
                 disabled={!meta || clipLength <= 0}
               >

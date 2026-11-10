@@ -29,10 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "dmg"
-    ],
+    "targets": "all",
     "category": "Video",
     "shortDescription": "Videos schneiden und verkleinern",
     "icon": [
@@ -44,6 +41,75 @@
     ],
     "macOS": {
       "minimumSystemVersion": "11.0"
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": [
+          "mp4",
+          "m4v"
+        ],
+        "name": "MP4-Video",
+        "description": "MP4-Video",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "mimeType": "video/mp4",
+        "contentTypes": [
+          "public.mpeg-4",
+          "com.apple.m4v-video"
+        ]
+      },
+      {
+        "ext": [
+          "mov"
+        ],
+        "name": "QuickTime-Video",
+        "description": "QuickTime-Video",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "mimeType": "video/quicktime",
+        "contentTypes": [
+          "com.apple.quicktime-movie"
+        ]
+      },
+      {
+        "ext": [
+          "mkv"
+        ],
+        "name": "Matroska-Video",
+        "description": "Matroska-Video",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "mimeType": "video/x-matroska",
+        "contentTypes": [
+          "org.matroska.mkv"
+        ]
+      },
+      {
+        "ext": [
+          "webm"
+        ],
+        "name": "WebM-Video",
+        "description": "WebM-Video",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "mimeType": "video/webm",
+        "contentTypes": [
+          "org.webmproject.webm"
+        ]
+      },
+      {
+        "ext": [
+          "avi"
+        ],
+        "name": "AVI-Video",
+        "description": "AVI-Video",
+        "role": "Viewer",
+        "rank": "Alternate",
+        "mimeType": "video/x-msvideo",
+        "contentTypes": [
+          "public.avi"
+        ]
+      }
+    ]
   }
 }

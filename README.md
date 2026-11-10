@@ -1,19 +1,19 @@
 # Trimly
 
-Videos schneiden und verkleinern. Video reinziehen, Anfang und Ende mit der gelben Klammer setzen, Qualität wählen, exportieren.
+Videos schneiden und verkleinern. Video reinziehen, Anfang und Ende mit der Klammer setzen, Qualität wählen, exportieren.
 
 Trimly gibt es in zwei Varianten mit derselben Oberfläche:
 
-- **Desktop-App (macOS):** startet sofort und arbeitet direkt mit der Datei auf deinem Mac, ohne Upload. Kodiert per Hardware mit Apple VideoToolbox.
-- **Web-Version:** läuft im Browser mit einem Server, auf dem ffmpeg rechnet. Die Web-Version läuft komplett in Docker.
+- **Desktop-App (macOS, Windows):** startet sofort und arbeitet direkt mit der Datei auf deinem Rechner, ohne Upload. Kodiert per Hardware (Apple VideoToolbox, NVIDIA NVENC, Intel Quick Sync oder AMD AMF). Videos lassen sich per „Öffnen mit → Trimly“ starten.
+- **Web-Version:** läuft im Browser mit einem Server, auf dem ffmpeg rechnet, komplett in Docker. Mit NVIDIA-Karte kodiert auch der Server per GPU.
 
 ![Editor mit Filmstreifen, gelber Schnittklammer und Export-Spalte](docs/images/editor.jpg)
 
 ## Funktionen
 
-- **Schneiden auf dem Filmstreifen:** Griffe ziehen, oder <kbd>I</kbd> und <kbd>O</kbd> drücken, um Anfang und Ende auf die Abspielposition zu setzen. <kbd>Shift</kbd> + Klick und <kbd>Alt</kbd> + Klick gehen auch.
-- **Qualität:** Klein (480p), Mittel (720p) und Hoch (1080p). Unter Eigene stellst du Auflösung, Bilder pro Sekunde und Bitrate selbst ein. Trimly skaliert nie hoch und behält das Seitenverhältnis, auch bei Hochformat.
-- **Nur schneiden (Desktop):** übernimmt die Videospur unverändert und ist dadurch in Sekunden fertig. Geschnitten wird dabei an Keyframes.
+- **Schneiden auf dem Filmstreifen:** Ein Klick springt an die Stelle, auch auf einem Griff. Gedrückt halten macht einen Griff verschiebbar. Alternativ setzen <kbd>I</kbd> und <kbd>O</kbd> Anfang und Ende auf die Abspielposition, <kbd>Shift</kbd> + Klick und <kbd>Alt</kbd> + Klick gehen auch.
+- **Qualität:** Original (nur schneiden, in Sekunden fertig, Schnitt an Keyframes), Klein (480p), Mittel (720p), Hoch (1080p) und Eigene. Trimly skaliert nie hoch, behält das Seitenverhältnis und hebt die Bitrate nie über die des Originals.
+- **Ausgabe:** Video mit Ton, nur Video oder nur Ton als MP3.
 - **Lautstärke:** 0 bis 200 % für die Tonspur im Ergebnis.
 - **Größenschätzung:** zeigt schon vor dem Export, wie groß die Datei ungefähr wird.
 
@@ -32,7 +32,9 @@ Trimly gibt es in zwei Varianten mit derselben Oberfläche:
 | <kbd>I</kbd> / <kbd>O</kbd> (oder <kbd>S</kbd> / <kbd>E</kbd>) | Anfang / Ende setzen |
 | <kbd>←</kbd> / <kbd>→</kbd> auf einem Griff | Griff um 0,1 s verschieben, mit <kbd>Shift</kbd> um 1 s |
 
-## Desktop-App (macOS)
+## Desktop-App
+
+### macOS
 
 Voraussetzungen: [Homebrew](https://brew.sh), dann:
 
@@ -52,7 +54,21 @@ Als App bauen (`.app` und `.dmg` landen in `frontend/src-tauri/target/release/bu
 cd frontend && npm run desktop:build
 ```
 
-Die App sucht ffmpeg im `PATH` sowie in `/opt/homebrew/bin` und `/usr/local/bin`. Kennt ffmpeg `h264_videotoolbox`, kodiert sie per Hardware, sonst mit libx264. Unten in der Export-Spalte steht, welcher Encoder aktiv ist.
+Nach dem ersten Start steht Trimly im Finder unter „Öffnen mit“ für MP4, MOV, MKV, WebM und AVI. Es wird dabei nicht zum Standardprogramm.
+
+### Windows
+
+Gebaut werden muss auf Windows selbst. Voraussetzungen: [Rust](https://rustup.rs), [Node.js](https://nodejs.org) und ffmpeg:
+
+```bash
+winget install ffmpeg
+```
+
+Danach wie oben `npm run desktop:build`. Der Installer in `frontend/src-tauri/target/release/bundle/` trägt Trimly unter „Öffnen mit“ ein.
+
+### Hardware-Kodierung
+
+Die App sucht ffmpeg im `PATH` und in den üblichen Installationsordnern (Homebrew, winget, `C:\ffmpeg\bin`). Beim Start probiert sie VideoToolbox, NVENC, Quick Sync und AMF jeweils mit einem kurzen Test-Encode und nimmt den ersten, der läuft. Scheitert die Hardware an einem einzelnen Video, kodiert sie automatisch mit libx264 neu. Unten in der Export-Spalte steht, welcher Encoder aktiv ist. `TRIMLY_ENCODER=cpu` erzwingt Software-Kodierung.
 
 ### Wie schnell?
 
@@ -76,7 +92,7 @@ cd Trimly
 docker compose up --build
 ```
 
-Danach läuft das Frontend auf <http://localhost:3000> und das Backend auf <http://localhost:9000>. Beenden mit `docker compose down`.
+Danach läuft das Frontend auf <http://localhost:3000> und das Backend auf <http://localhost:9000>. Beenden mit `docker compose down`. Unter Windows startet `start-trimly.bat` alles und schaltet mit NVIDIA-Karte das GPU-Encoding (`docker-compose.gpu.yml`) dazu.
 
 ![Startseite](docs/images/start.jpg)
 
@@ -88,7 +104,7 @@ In der Produktion liegt nginx auf Port 80 vor Frontend und Backend:
 APPLICATION_SECRET=$(openssl rand -base64 32) docker compose -f docker-compose.prod.yml up --build -d
 ```
 
-Uploads sind auf 500 MB begrenzt (`nginx.conf`, `backend/conf/application.conf`).
+Uploads sind auf 20 GB begrenzt (`nginx.conf`, `backend/conf/application.conf`).
 
 ## Tests
 
@@ -113,6 +129,9 @@ Backend- und Rust-Tests rufen das echte ffmpeg mit `backend/test/resources/testV
 | Oberfläche | React 19 (Create React App) | `frontend/src/` |
 | Desktop | Tauri 2, Rust, ruft ffmpeg direkt auf | `frontend/src-tauri/` |
 | Server | Scala 2.13, Play Framework 3 | `backend/` |
+| Editor (in Arbeit) | Mehrere Clips, Tonspur, Overlays, Zoom | `frontend/src/editor/`, `POST /render` |
 | Verarbeitung | ffmpeg / ffprobe, H.264 + AAC | |
 
 Die Oberfläche spricht über eine kleine Plattform-Schicht (`frontend/src/platform/`) entweder mit dem Server (`web.js`) oder mit Rust (`desktop.js`). Welche gilt, entscheidet sich beim Start daran, ob die Seite in Tauri läuft.
+
+Der Editor-Tab (Clips kombinieren, Tonspur trennen, Overlays, Zoom) existiert in Code und Backend, ist aber noch nicht in die neue Oberfläche eingebunden.
