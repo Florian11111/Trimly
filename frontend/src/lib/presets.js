@@ -4,7 +4,7 @@ export const PRESETS = [
   {
     id: "copy",
     label: "Original",
-    hint: "Nur schneiden, in Sekunden fertig",
+    hint: "Nur schneiden, sofort fertig",
     copy: true,
   },
   { id: "small", label: "Klein", hint: "480p, 30 fps", height: 480, fps: 30, bitrate: 1000 },
@@ -31,9 +31,9 @@ export const AUDIO_KBPS = 128;
 export const AUDIO_ONLY_KBPS = 192;
 
 export const OUTPUTS = [
-  { id: "both", label: "Video mit Ton" },
-  { id: "video", label: "Nur Video" },
-  { id: "audio", label: "Nur Ton (MP3)" },
+  { id: "both", label: "Mit Ton", hint: "Video mit Ton" },
+  { id: "video", label: "Ohne Ton", hint: "Nur das Video, Ton wird entfernt" },
+  { id: "audio", label: "Nur Ton", hint: "Nur der Ton als MP3" },
 ];
 
 export function presetsFor() {

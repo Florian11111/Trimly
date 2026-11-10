@@ -129,9 +129,9 @@ Backend- und Rust-Tests rufen das echte ffmpeg mit `backend/test/resources/testV
 | Oberfläche | React 19 (Create React App) | `frontend/src/` |
 | Desktop | Tauri 2, Rust, ruft ffmpeg direkt auf | `frontend/src-tauri/` |
 | Server | Scala 2.13, Play Framework 3 | `backend/` |
-| Editor (in Arbeit) | Mehrere Clips, Tonspur, Overlays, Zoom | `frontend/src/editor/`, `POST /render` |
+| Editor (nur Web) | Mehrere Clips, Tonspur, Overlays, Zoom | `frontend/src/editor/`, `POST /render` |
 | Verarbeitung | ffmpeg / ffprobe, H.264 + AAC | |
 
 Die Oberfläche spricht über eine kleine Plattform-Schicht (`frontend/src/platform/`) entweder mit dem Server (`web.js`) oder mit Rust (`desktop.js`). Welche gilt, entscheidet sich beim Start daran, ob die Seite in Tauri läuft.
 
-Der Editor-Tab (Clips kombinieren, Tonspur trennen, Overlays, Zoom) existiert in Code und Backend, ist aber noch nicht in die neue Oberfläche eingebunden.
+In der Web-Version schaltet „Editor“ oben rechts in einen Editor zum Kombinieren mehrerer Clips, Trennen der Tonspur, für Pfeile, Text, Bilder und Zoom. In der Desktop-App fehlt er noch.

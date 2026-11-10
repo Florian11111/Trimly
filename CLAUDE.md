@@ -28,7 +28,7 @@ Florian nutzt beides: Mac (M5) und Windows mit NVIDIA-Karte.
 - „Anderes Video“ ruft `resetAll()` auf (alles inkl. Einstellungen zurück). Der Arbeitsbereich hat `key={video.src}`, damit Player und Filmstreifen pro Video neu entstehen.
 - Nach einem Export tritt der Export-Knopf zurück (`.btn-primary.is-done`), bis sich eine Einstellung ändert.
 - `web.js` folgt dem Backend-Protokoll: `mode=original|custom`, `output=both|video|audio`, bei `status: "missing"` Original neu hochladen und erneut senden, `/check` liefert `status` ready/computing/error/unknown, Download per Direktlink mit `?name=` (kein RAM-Puffer).
-- `src/editor/` (Editor-Tab: Clips, Tonspur, Overlays, Zoom, `POST /render`) stammt aus dem Oktober-Stand und ist **noch nicht in die neue Oberfläche eingebunden** – offenes Feature. `src/presets.js` gehört dazu.
+- `src/editor/` (Editor-Tab: Clips, Tonspur, Overlays, Zoom, `POST /render`) stammt aus dem Oktober-Stand. Er hängt über den Umschalter „Schneiden / Editor“ in der Kopfzeile an `App.js`, **nur in der Web-Version** (die Desktop-App hat keinen Renderer dafür). Beide Ansichten bleiben beim Umschalten erhalten (`hidden`). Farben in `Editor.css` nutzen die Design-Tokens. `src/presets.js` gehört nur zum Editor.
 
 ### Desktop (`frontend/src-tauri/src/`)
 
@@ -80,7 +80,7 @@ README-Screenshots in `docs/images/` stammen von Playwright/WebKit gegen `docker
 
 ## Bekannte Baustellen
 
-- Editor-Tab ist nicht in die neue Oberfläche eingebunden (siehe oben); in der Desktop-App bräuchte er eine Rust-Variante von `/render`.
+- Editor nur im Web; für die Desktop-App bräuchte `EditRenderer.scala` ein Gegenstück in Rust. Der Editor hat noch eigene Presets (`src/presets.js`) statt `lib/presets.js`.
 - Windows-Build und „Öffnen mit“ unter Windows sind ungetestet (kein Windows-Rechner in der Entwicklungsumgebung).
 - Im Linux-Container gibt es kein VideoToolbox; der Server kann nur NVENC oder CPU.
 - Die Web-Version kennt die Bildrate der Quelle nicht und sendet die Preset-fps unverändert.

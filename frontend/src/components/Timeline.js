@@ -3,7 +3,9 @@ import { formatTime } from "../lib/format";
 
 const STRIP_HEIGHT = 64;
 const MIN_LENGTH = 0.01; // Sekunden
-const HOLD_MS = 200; // so lange gedrückt halten, bis ein Griff verschiebbar wird
+const HOLD_MS = 200;
+// Vorschaubilder erst nach dem Player laden, damit er nicht um die ersten Daten konkurriert
+const THUMBS_DELAY_MS = 400; // so lange gedrückt halten, bis ein Griff verschiebbar wird
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -18,6 +20,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
   const dragRef = useRef(null);
   const holdRef = useRef(null); // { mode, time, timer } solange ein Griff gedrückt, aber noch nicht gegriffen ist
   const [grabbing, setGrabbing] = useState(null);
+  const [thumbsReady, setThumbsReady] = useState(false);
   const [width, setWidth] = useState(0);
   const [start, end] = range;
 
@@ -39,17 +42,13 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
     if (!ctx) return undefined;
 
     let cancelled = false;
+    let probe = null;
+    setThumbsReady(false);
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(STRIP_HEIGHT * dpr);
     const thumbWidth = STRIP_HEIGHT * (aspect || 16 / 9);
     const count = Math.max(1, Math.ceil(width / thumbWidth));
-
-    const probe = document.createElement("video");
-    probe.muted = true;
-    probe.playsInline = true;
-    probe.preload = "auto";
-    probe.src = src;
 
     const once = (event) =>
       new Promise((resolve, reject) => {
@@ -57,7 +56,12 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
         probe.addEventListener("error", reject, { once: true });
       });
 
-    (async () => {
+    const run = async () => {
+      probe = document.createElement("video");
+      probe.muted = true;
+      probe.playsInline = true;
+      probe.preload = "auto";
+      probe.src = src;
       // Erst zeichnen, wenn ein Bild dekodiert ist; sonst bleibt das erste leer (WebKit)
       if (probe.readyState < 2) await once("loadeddata");
       for (let i = 0; i < count && !cancelled; i++) {
@@ -66,13 +70,18 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
         await seeked;
         if (cancelled) return;
         ctx.drawImage(probe, i * thumbWidth * dpr, 0, thumbWidth * dpr, STRIP_HEIGHT * dpr);
+        if (i === 0) setThumbsReady(true);
       }
-    })().catch(() => {});
+    };
+    const timer = setTimeout(() => run().catch(() => {}), THUMBS_DELAY_MS);
 
     return () => {
       cancelled = true;
-      probe.removeAttribute("src");
-      probe.load();
+      clearTimeout(timer);
+      if (probe) {
+        probe.removeAttribute("src");
+        probe.load();
+      }
     };
   }, [src, duration, width, aspect]);
 
@@ -156,7 +165,11 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
         onPointerCancel={endDrag}
         data-testid="timeline"
       >
-        <canvas ref={canvasRef} className="timeline-strip" aria-hidden="true" />
+        <canvas
+          ref={canvasRef}
+          className={`timeline-strip ${thumbsReady ? "is-ready" : ""}`}
+          aria-hidden="true"
+        />
         <div className="timeline-shade" style={{ left: 0, width: pct(start) }} />
         <div className="timeline-shade" style={{ left: pct(end), right: 0 }} />
         <div className="timeline-selection" style={{ left: pct(start), width: pct(end - start) }}>

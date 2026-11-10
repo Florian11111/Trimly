@@ -139,6 +139,47 @@
   height: 30px;
 }
 
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  padding: 3px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.tabs + .btn {
+  margin-left: 0;
+}
+
+.tab {
+  height: 26px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--muted);
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.tab.is-active {
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(138, 92, 255, 0.5);
+}
+
+.workspace[hidden],
+.editor-host[hidden] {
+  display: none;
+}
+
+.editor-host {
+  flex: 1;
+  padding: 20px 24px 24px;
+  min-width: 0;
+}
+
 /* ─── Leerer Zustand ───────────────────────────────────────────────────── */
 
 .empty {
@@ -312,6 +353,12 @@ kbd {
   width: 100%;
   height: 100%;
   border-radius: var(--radius-s);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+.timeline-strip.is-ready {
+  opacity: 1;
 }
 
 .timeline-shade {
@@ -447,12 +494,48 @@ kbd {
 
 .segment {
   position: relative;
-  padding: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 4px 7px;
   border-radius: var(--radius-s);
   font-size: 12px;
   text-align: center;
   color: var(--muted);
   cursor: pointer;
+}
+
+.output-icon {
+  flex: none;
+}
+
+.segment.is-active .output-icon {
+  color: #b59bff;
+}
+
+.field-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-s);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.field.is-inactive {
+  opacity: 0.4;
+}
+
+.field.is-inactive .choice {
+  cursor: default;
+}
+
+.field.is-inactive .choice:hover {
+  background: none;
 }
 
 .segment input {

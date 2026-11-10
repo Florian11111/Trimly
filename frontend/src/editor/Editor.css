@@ -7,8 +7,8 @@
 
 .ed-empty {
   padding: 40px;
-  color: #6b7280;
-  border: 2px dashed #aaa;
+  color: var(--muted);
+  border: 2px dashed var(--line);
   border-radius: 10px;
 }
 
@@ -22,7 +22,7 @@
   position: relative;
   flex: 1;
   min-width: 0;
-  background: #000;
+  background: rgba(0, 0, 0, 0.55);
   border-radius: 8px;
   overflow: hidden;
   user-select: none;
@@ -60,8 +60,10 @@
 }
 
 .ed-panel {
-  background: #f3f4f6;
-  border: 1px solid #d1d5db;
+  background: var(--panel);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
   font-size: 0.88rem;
@@ -92,7 +94,7 @@
 }
 
 .ed-hint {
-  color: #6b7280;
+  color: var(--muted);
   font-size: 0.82rem;
   margin: 4px 0;
 }
@@ -116,7 +118,7 @@
   align-items: center;
   gap: 4px;
   font-size: 0.85rem;
-  color: #374151;
+  color: var(--muted);
 }
 
 .ed-btn {
@@ -124,18 +126,18 @@
   padding: 6px 12px;
   border: none;
   border-radius: 6px;
-  background: #e5e7eb;
-  color: #111827;
+  background: var(--raised);
+  color: var(--text);
   font-weight: 500;
   cursor: pointer;
 }
 
 .ed-select {
   padding: 5px 8px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line);
   border-radius: 6px;
-  background: white;
-  color: #111827;
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
   font-size: 0.9rem;
 }
 
@@ -144,51 +146,53 @@
 }
 
 .ed-btn:disabled {
-  background: #e5e7eb;
-  color: #111827;
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 .ed-btn.primary {
-  background: #2563eb;
-  color: white;
+  background: linear-gradient(100deg, var(--violet), var(--blue));
+  color: #fff;
 }
 
 .ed-btn.danger {
-  background: #dc2626;
-  color: white;
+  background: rgba(255, 110, 110, 0.18);
+  color: var(--danger);
 }
 
 .ed-btn.export {
-  background: #7c3aed;
-  color: white;
+  background: linear-gradient(100deg, var(--violet), var(--blue));
+  box-shadow: 0 8px 28px -10px rgba(110, 100, 255, 0.85);
+  color: #fff;
   font-weight: 600;
   margin-left: auto;
 }
 
 .ed-upload {
   font-size: 0.85rem;
-  color: #2563eb;
+  color: #9db6ff;
 }
 
 .ed-message {
-  color: green;
+  color: #8fe0b0;
   font-size: 0.9rem;
   margin: 0;
 }
 
 .ed-message.error {
-  color: red;
+  color: var(--danger);
 }
 
 /* ─── Timeline ─────────────────────────────────────────────────────────── */
 
 .ed-timeline {
   overflow-x: auto;
-  background: #1f2937;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  color: #e5e7eb;
+  color: var(--text);
   font-size: 0.78rem;
   user-select: none;
 }
@@ -201,7 +205,7 @@
 .tl-row {
   position: relative;
   display: flex;
-  border-bottom: 1px solid #374151;
+  border-bottom: 1px solid var(--line);
   min-height: 34px;
 }
 
@@ -209,7 +213,7 @@
   height: 22px;
   min-height: 22px;
   cursor: pointer;
-  background: #111827;
+  background: rgba(8, 9, 26, 0.85);
 }
 
 .tl-row-label {
@@ -222,7 +226,7 @@
   padding: 0 8px;
   display: flex;
   align-items: center;
-  background: #111827;
+  background: rgba(8, 9, 26, 0.85);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -237,8 +241,8 @@
   position: absolute;
   top: 3px;
   padding-left: 3px;
-  border-left: 1px solid #6b7280;
-  color: #9ca3af;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
   white-space: nowrap;
 }
 
@@ -255,17 +259,17 @@
 }
 
 .tl-item.selected {
-  outline: 2px solid #fbbf24;
+  outline: 2px solid var(--trim);
   z-index: 2;
 }
 
-.tl-item.video { background: #2563eb; }
-.tl-item.audio { background: #059669; }
-.tl-item.audio.linked { background: #065f46; cursor: pointer; }
-.tl-item.overlay { background: #b45309; }
-.tl-item.overlay.text { background: #7c3aed; }
-.tl-item.overlay.image { background: #be185d; }
-.tl-item.zoom { background: #a16207; }
+.tl-item.video { background: #4f63e8; }
+.tl-item.audio { background: #1f9e8a; }
+.tl-item.audio.linked { background: #1a6b62; cursor: pointer; }
+.tl-item.overlay { background: #c46a2a; }
+.tl-item.overlay.text { background: #7b4dff; }
+.tl-item.overlay.image { background: #b04a8f; }
+.tl-item.zoom { background: #a77a2a; }
 
 .tl-label {
   padding: 0 8px;
@@ -292,7 +296,7 @@
   top: 0;
   bottom: 0;
   width: 2px;
-  background: #f87171;
+  background: var(--trim);
   pointer-events: none;
   z-index: 4;
 }
