@@ -177,3 +177,44 @@ fn exports_audio_only_as_mp3_and_video_without_audio() {
     assert!(!probe(&ffprobe, &silent).has_audio);
     let _ = std::fs::remove_file(silent);
 }
+
+/// Editor-Export wie render_edit: zwei Abschnitte, Zoom, PNG-Overlay, zwei Tonspuren gemischt
+#[test]
+fn renders_editor_project_with_zoom_overlay_and_audio_mix() {
+    use base64::Engine;
+    use std::collections::HashMap;
+    use trimly_lib::edit;
+    let Some((ff, ffprobe, video)) = setup() else { return };
+    let v = video.display().to_string().replace('\\', "\\\\");
+
+    // 1×1 transparentes PNG, ffmpeg skaliert es auf Ausgabegröße
+    let png = out_path("overlay.png");
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+        .unwrap();
+    std::fs::write(&png, bytes).unwrap();
+    let files = HashMap::from([("overlay_0".to_string(), png.display().to_string())]);
+
+    let project: edit::EditProject = serde_json::from_str(&format!(
+        r#"{{"preset": {{"width": 640, "height": 360, "fps": 30, "bitrate": 800}},
+            "video": [{{"originalId": "{v}", "start": 1, "end": 2.5}}, {{"originalId": "{v}", "start": 10, "end": 11}}],
+            "audio": [{{"originalId": "{v}", "start": 1, "end": 3.5, "at": 0, "volume": 1}},
+                      {{"originalId": "{v}", "start": 5, "end": 6, "at": 1, "volume": 0.5}}],
+            "zooms": [{{"start": 0.2, "end": 1.2, "x": 0.25, "y": 0.25, "w": 0.5}}],
+            "overlays": [{{"file": "overlay_0", "start": 0.5, "end": 2}}]}}"#
+    ))
+    .unwrap();
+    edit::validate(&project, &files).unwrap();
+
+    let out = out_path("edit.mp4");
+    let args = edit::build_video_args(&project, &files, 60.0, &|_| true, encoder(&ff), &out.display().to_string());
+    let res = Command::new(&ff).args(&args).output().unwrap();
+    assert!(res.status.success(), "ffmpeg fehlgeschlagen: {}", String::from_utf8_lossy(&res.stderr));
+
+    let info = probe(&ffprobe, &out);
+    assert_eq!((info.width, info.height), (640, 360));
+    assert!((info.duration - 2.5).abs() < 0.15, "Dauer {}", info.duration);
+    assert!(info.has_audio);
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&png);
+}

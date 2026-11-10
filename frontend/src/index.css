@@ -1,5 +1,5 @@
 :root {
-  /* Nachtblau mit Glasflächen; Blau-Violett für Aktionen, Orange für den Schnitt */
+  /* Nachtblau mit Glasflächen; Blau-Violett für Aktionen, helles Lavendel für den Schnitt */
   --canvas: #08091a;
   --panel: rgba(20, 22, 48, 0.55);
   --raised: rgba(255, 255, 255, 0.07);
@@ -8,8 +8,8 @@
   --muted: #a6a9cc;
   --violet: #8a5cff;
   --blue: #3f7bff;
-  --trim: #ffa95e;
-  --trim-ink: #2e1604;
+  --trim: #c9bfff;
+  --trim-ink: #26215c;
   --danger: #ff8e8e;
   --glass-blur: blur(22px) saturate(140%);
 

@@ -15,6 +15,15 @@ const dirName = (path) => path.slice(0, lastSep(path) + 1);
 
 const asError = (e) => (e instanceof Error ? e : new Error(String(e)));
 
+// PNG-Blob → Base64 ohne „data:“-Präfix (Rust dekodiert es in render_edit)
+const blobToBase64 = (blob) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+
 export function createDesktopPlatform() {
   return {
     kind: "desktop",
@@ -80,6 +89,31 @@ export function createDesktopPlatform() {
             audioBitrate: target.audioBitrate ?? null,
             streams: outputMode,
           },
+          onProgress: channel,
+        });
+        return { size: result.size, path: output, savedAs: baseName(output), seconds: result.seconds };
+      } catch (e) {
+        throw asError(e);
+      }
+    },
+
+    // Editor-Export: Projekt aus buildRenderProject, Overlays als PNG-Blobs (overlay_0, overlay_1, …)
+    async renderEdit({ project, overlays, name, output: outputMode }, { onProgress } = {}) {
+      const ext = outputMode === "audio" ? "mp3" : "mp4";
+      const output = await save({
+        defaultPath: `${fileStem(name)}_edit.${ext}`,
+        filters: [{ name: outputMode === "audio" ? "Audio" : "Video", extensions: [ext] }],
+      });
+      if (!output) return null;
+
+      const channel = new Channel();
+      channel.onmessage = (p) => onProgress?.(p);
+      onProgress?.(0);
+      try {
+        const result = await invoke("render_edit", {
+          project,
+          overlays: await Promise.all(overlays.map(blobToBase64)),
+          output,
           onProgress: channel,
         });
         return { size: result.size, path: output, savedAs: baseName(output), seconds: result.seconds };

@@ -1,0 +1,2 @@
+# Shell-Skripte immer mit LF, sonst scheitert bash (MSYS2/macOS) an \r
+*.sh text eol=lf

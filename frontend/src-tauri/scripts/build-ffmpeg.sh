@@ -32,14 +32,17 @@ fi
 
 # wrapped_avframe/rawvideo: für den Encoder-Test mit -f lavfi color=…
 DECODERS="wrapped_avframe,rawvideo,h264,hevc,vp8,vp9,libdav1d,mpeg4,mpeg2video,mpeg1video,mjpeg,prores,h263,wmv3,vc1,\
-aac,aac_latm,mp3,mp3float,mp2,opus,vorbis,ac3,eac3,flac,alac,wmav2,\
+png,aac,aac_latm,mp3,mp3float,mp2,opus,vorbis,ac3,eac3,flac,alac,wmav2,\
 pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_s16be,pcm_s24be,pcm_u8,pcm_alaw,pcm_mulaw"
 ENCODERS="libx264,aac,libmp3lame,rawvideo,wrapped_avframe,pcm_s16le"
-DEMUXERS="mov,matroska,avi,mpegts,mpegps,mp3,aac,wav,flac,ogg,flv,asf,h264,hevc,m4v,lavfi"
+# image2/png_pipe: Overlays des Editors (-loop 1 -i overlay_0.png)
+DEMUXERS="mov,matroska,avi,mpegts,mpegps,mp3,aac,wav,flac,ogg,flv,asf,h264,hevc,m4v,lavfi,image2,png_pipe"
 MUXERS="mp4,mov,ipod,mp3,null,matroska,webm"
 PARSERS="h264,hevc,aac,aac_latm,mpegaudio,mpeg4video,mpegvideo,vp8,vp9,av1,opus,vorbis,ac3,flac,mjpeg"
 BSFS="h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,extract_extradata,vp9_superframe,av1_frame_split,null"
-FILTERS="scale,fps,volume,aresample,aformat,format,null,anull,setpts,asetpts,trim,atrim,color,anullsrc,copy,acopy"
+# Zweite Zeile: Editor (src/edit.rs)
+FILTERS="scale,fps,volume,aresample,aformat,format,null,anull,setpts,asetpts,trim,atrim,color,anullsrc,copy,acopy,\
+pad,setsar,concat,zoompan,overlay,adelay,amix"
 
 EXTRA=()
 if [ "$OS" = windows ]; then
@@ -61,7 +64,7 @@ make distclean >/dev/null 2>&1 || true
   --disable-everything --disable-autodetect --disable-doc --disable-debug \
   --disable-ffplay --disable-network --disable-shared --enable-static \
   --enable-ffmpeg --enable-ffprobe \
-  --enable-libx264 --enable-libmp3lame --enable-libdav1d \
+  --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-zlib \
   --enable-protocol=file,pipe \
   --enable-indev=lavfi \
   --enable-decoder="$DECODERS" \

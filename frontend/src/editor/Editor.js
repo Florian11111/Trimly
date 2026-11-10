@@ -22,7 +22,10 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const isTyping = (e) =>
   ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && !["range", "checkbox"].includes(e.target.type);
 
-export default function Editor({ api, mainClip, ensureMainOriginal, active, formatFileSize }) {
+// platform: in der Desktop-App rendert Rust lokal (Clip-„ID“ = Dateipfad, kein Upload),
+// im Web geht alles über das Backend (`api`).
+export default function Editor({ api, platform, mainClip, ensureMainOriginal, active, formatFileSize }) {
+  const desktop = platform?.kind === "desktop";
   const [project, setProject] = useState(P.emptyProject);
   const [originalIds, setOriginalIds] = useState({}); // clipId -> Server-ID (nicht im Undo-Verlauf)
   const [uploads, setUploads] = useState({});          // clipId -> Upload-Fortschritt in %
@@ -245,7 +248,7 @@ export default function Editor({ api, mainClip, ensureMainOriginal, active, form
   // Originale auf dem Server aktiv halten, solange der Editor offen ist
   useEffect(() => {
     const ids = Object.values(originalIds);
-    if (!ids.length) return;
+    if (desktop || !ids.length) return;
     const ping = () => fetch(`${api}/keepalive`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -253,7 +256,7 @@ export default function Editor({ api, mainClip, ensureMainOriginal, active, form
     }).catch(() => {});
     const timer = setInterval(ping, 10 * 60 * 1000);
     return () => clearInterval(timer);
-  }, [api, originalIds]);
+  }, [api, desktop, originalIds]);
 
   // ─── Größen messen ───────────────────────────────────────────────────────
 
@@ -452,6 +455,10 @@ export default function Editor({ api, mainClip, ensureMainOriginal, active, form
   // Server-ID eines Clips; wartet auf laufenden Upload oder lädt (erneut) hoch
   const ensureClipOriginal = async (clipId, forceNew = false) => {
     if (clipId === "main") return ensureMainOriginal(forceNew);
+    if (desktop) {
+      if (!originalIds[clipId]) throw new Error("Clip nicht gefunden. Bitte erneut hinzufügen.");
+      return originalIds[clipId];
+    }
     const entry = clipUploadsRef.current[clipId];
     if (!entry) throw new Error("Clip ist nicht auf dem Server. Bitte erneut hinzufügen.");
     if (!forceNew) {
@@ -480,6 +487,20 @@ export default function Editor({ api, mainClip, ensureMainOriginal, active, form
   };
 
   const pickClip = async () => {
+    if (desktop) {
+      try {
+        const path = await platform.pick();
+        if (!path) return;
+        const clip = await platform.open(path);
+        const clipId = P.newId("c");
+        commit(p => P.addClip(p, clipId, { url: clip.src, name: clip.name, duration: clip.ref.info.duration }));
+        setOriginalIds(ids => ({ ...ids, [clipId]: path }));
+        setMessage(`Clip „${clip.name}“ hinzugefügt.`);
+      } catch (err) {
+        setMessage("Fehler: " + err.message);
+      }
+      return;
+    }
     // wie im Schneiden-Tab: Dialog im Videos-Ordner starten
     if (window.showOpenFilePicker) {
       try {
@@ -621,6 +642,17 @@ export default function Editor({ api, mainClip, ensureMainOriginal, active, form
       const overlayBlobs = [];
       for (let i = 0; i < overlays.length; i++) {
         overlayBlobs.push(await renderOverlayPng(overlays[i], exportDims.width, exportDims.height, imagesRef.current));
+      }
+
+      if (desktop) {
+        const label = exportOutput === "audio" ? "Ton wird exportiert" : "Video wird gerendert";
+        setMessage(`${label} …`);
+        const result = await platform.renderEdit(
+          { project: body, overlays: overlayBlobs, name: mainClip?.name || "video", output: exportOutput },
+          { onProgress: (p) => setMessage(`${label} … ${Math.round(p * 100)} %`) }
+        );
+        setMessage(result ? `Export fertig (${formatFileSize(result.size)}): ${result.savedAs}` : "");
+        return;
       }
       const render = async (renderBody) => {
         const formData = new FormData();

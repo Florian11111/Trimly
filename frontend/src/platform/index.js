@@ -10,6 +10,8 @@
 //   encoderInfo()                → { label, hardware }
 //   onDragDrop(handler)          Desktop: Drag & Drop aus dem Finder
 //   reveal(path)                 Desktop: Datei im Finder zeigen
+//   renderEdit({project, overlays, name, output}, {onProgress})
+//                                nur Desktop: Editor-Projekt lokal rendern (Web: POST /render im Editor)
 
 export const isDesktop =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

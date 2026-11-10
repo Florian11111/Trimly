@@ -1,3 +1,4 @@
+pub mod edit;
 pub mod ffmpeg;
 mod media_server;
 
@@ -155,22 +156,22 @@ fn media_url(path: String, server: State<'_, MediaServer>) -> Result<String, Str
     Ok(server.register(&p))
 }
 
+fn probe_file(path: &str) -> Result<VideoInfo, String> {
+    let ffprobe = tools().ffprobe.clone().ok_or(MISSING_FFMPEG)?;
+    let out = tool_command(&ffprobe)
+        .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
+        .arg(path)
+        .output()
+        .map_err(|e| format!("ffprobe konnte nicht gestartet werden: {e}"))?;
+    if !out.status.success() {
+        return Err("Diese Datei kann nicht gelesen werden. Ist es ein Video?".to_string());
+    }
+    ffmpeg::parse_probe(&String::from_utf8_lossy(&out.stdout))
+}
+
 #[tauri::command]
 async fn probe(path: String) -> Result<VideoInfo, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let ffprobe = tools().ffprobe.clone().ok_or(MISSING_FFMPEG)?;
-        let out = tool_command(&ffprobe)
-            .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
-            .arg(&path)
-            .output()
-            .map_err(|e| format!("ffprobe konnte nicht gestartet werden: {e}"))?;
-        if !out.status.success() {
-            return Err("Diese Datei kann nicht gelesen werden. Ist es ein Video?".to_string());
-        }
-        ffmpeg::parse_probe(&String::from_utf8_lossy(&out.stdout))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || probe_file(&path)).await.map_err(|e| e.to_string())?
 }
 
 /// Ein ffmpeg-Lauf mit Fortschritt. Err(CANCELLED) bei Abbruch, sonst Err mit den letzten stderr-Zeilen.
@@ -293,6 +294,96 @@ async fn export_video(
     .map_err(|e| e.to_string())?
 }
 
+/// Editor-Export (Gegenstück zu POST /render im Backend). `overlays` sind PNGs als Base64,
+/// in derselben Reihenfolge wie `overlay_0`, `overlay_1`, … im Projekt.
+#[tauri::command]
+async fn render_edit(
+    project: edit::EditProject,
+    overlays: Vec<String>,
+    output: String,
+    on_progress: Channel<f64>,
+    running: State<'_, Running>,
+) -> Result<ExportResult, String> {
+    use base64::Engine;
+    let child_slot = running.child.clone();
+    let cancelled = running.cancelled.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let t = tools();
+        let ffmpeg_path = t.ffmpeg.clone().ok_or(MISSING_FFMPEG)?;
+        let started = Instant::now();
+        if child_slot.lock().unwrap().is_some() {
+            return Err("Es läuft bereits ein Export.".to_string());
+        }
+        *cancelled.lock().unwrap() = false;
+
+        // Overlays als Dateien ablegen; der Ordner wird am Ende wieder gelöscht
+        let dir = std::env::temp_dir().join(format!("trimly-edit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Temporärer Ordner: {e}"))?;
+        let mut overlay_files = std::collections::HashMap::new();
+        for (i, data) in overlays.iter().enumerate() {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|_| "Ein Overlay ist beschädigt.".to_string())?;
+            let file = dir.join(format!("overlay_{i}.png"));
+            std::fs::write(&file, bytes).map_err(|e| format!("Overlay speichern: {e}"))?;
+            overlay_files.insert(format!("overlay_{i}"), file.display().to_string());
+        }
+
+        let result = (|| {
+            edit::validate(&project, &overlay_files)?;
+            // Jede Quelle einmal prüfen: gibt es sie noch, hat sie Ton, welche Bildrate?
+            let mut infos = std::collections::HashMap::new();
+            for path in project.video.iter().map(|s| &s.original_id).chain(project.audio.iter().map(|s| &s.original_id)) {
+                if !infos.contains_key(path) {
+                    let info = probe_file(path).map_err(|e| format!("{path}: {e}"))?;
+                    infos.insert(path.clone(), info);
+                }
+            }
+            let has_audio = |p: &str| infos.get(p).is_some_and(|i| i.has_audio);
+            let source_fps = infos.values().map(|i| i.fps).fold(0.0, f64::max);
+
+            if project.output == "audio" {
+                let args = edit::build_audio_args(&project, &has_audio, &output)
+                    .ok_or("Das Projekt hat keinen Ton.")?;
+                run_ffmpeg(&ffmpeg_path, &args, project.audio_total(), &on_progress, &child_slot, &cancelled)?;
+                return Ok("copy".to_string());
+            }
+
+            let total = project.total();
+            let run = |encoder: &str| {
+                let args = edit::build_video_args(&project, &overlay_files, source_fps, &has_audio, encoder, &output);
+                run_ffmpeg(&ffmpeg_path, &args, total, &on_progress, &child_slot, &cancelled)
+            };
+            // Filter laufen auf der CPU, kodiert wird mit Hardware, falls vorhanden
+            match run(t.encoder) {
+                Err(e) if e != CANCELLED && ffmpeg::is_hardware(t.encoder) => {
+                    eprintln!("[edit] {} fehlgeschlagen, nutze libx264: {e}", t.encoder);
+                    let _ = on_progress.send(0.0);
+                    run(ffmpeg::SW_ENCODER).map(|_| ffmpeg::SW_ENCODER.to_string())
+                }
+                other => other.map(|_| t.encoder.to_string()),
+            }
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        match result {
+            Ok(encoder) => Ok(ExportResult {
+                size: std::fs::metadata(&output).map(|m| m.len()).unwrap_or(0),
+                seconds: started.elapsed().as_secs_f64(),
+                encoder,
+            }),
+            Err(e) => {
+                let _ = std::fs::remove_file(&output);
+                Err(e)
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn cancel_export(running: State<'_, Running>) {
     *running.cancelled.lock().unwrap() = true;
@@ -324,6 +415,7 @@ pub fn run() {
             probe,
             media_url,
             export_video,
+            render_edit,
             cancel_export
         ])
         .build(tauri::generate_context!())

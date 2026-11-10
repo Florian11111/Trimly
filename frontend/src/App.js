@@ -37,7 +37,7 @@ export default function App() {
 
   const [job, setJob] = useState(null); // { state: running|done|error, progress, result, message }
   const [dragging, setDragging] = useState(false);
-  // Editor-Tab (nur Web; die Desktop-App hat noch keinen eigenen Renderer)
+  // Editor-Tab (Web: Backend rendert, Desktop: src-tauri/src/edit.rs)
   const [tab, setTab] = useState("trim"); // trim | edit
   const [editorOpened, setEditorOpened] = useState(false);
   const [originalId, setOriginalId] = useState(null);
@@ -391,7 +391,7 @@ export default function App() {
             <span className="file-size">{formatBytes(video.size)}</span>
           </span>
         )}
-        {video && platform?.kind === "web" && (
+        {video && platform && (
           <div className="tabs" role="tablist" aria-label="Ansicht">
             {[
               ["trim", "Schneiden"],
@@ -690,11 +690,22 @@ export default function App() {
             <Editor
               key={video.src}
               api={API}
+              platform={platform}
               active={tab === "edit"}
               mainClip={
-                meta ? { url: video.src, name: video.name, duration: meta.duration, originalId } : null
+                meta
+                  ? {
+                      url: video.src,
+                      name: video.name,
+                      duration: meta.duration,
+                      // Desktop: der Dateipfad ist die „ID“, es wird nichts hochgeladen
+                      originalId: desktop ? video.ref.path : originalId,
+                    }
+                  : null
               }
-              ensureMainOriginal={(force) => video.ref.ensureUploaded(force)}
+              ensureMainOriginal={(force) =>
+                desktop ? Promise.resolve(video.ref.path) : video.ref.ensureUploaded(force)
+              }
               formatFileSize={formatBytes}
             />
           </main>
