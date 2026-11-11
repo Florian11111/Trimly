@@ -26,8 +26,18 @@ esac
 SRC="$WORK/ffmpeg-$FFMPEG_VERSION"
 if [ ! -d "$SRC" ]; then
   echo "Lade ffmpeg $FFMPEG_VERSION …"
-  curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" -o "$WORK/ffmpeg.tar.xz"
-  tar -xf "$WORK/ffmpeg.tar.xz" -C "$WORK"
+  # ffmpeg.org ist manchmal sehr langsam (Release v0.2.0 brach mit curl-Timeout ab),
+  # darum mehrere Versuche und danach der offizielle Spiegel auf GitHub (gleicher Quelltext)
+  FETCH=(curl -fsSL --retry 4 --retry-all-errors --connect-timeout 30 --max-time 600)
+  if "${FETCH[@]}" "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz" -o "$WORK/ffmpeg.tar"; then
+    echo "  von ffmpeg.org"
+  else
+    echo "  ffmpeg.org nicht erreichbar, nehme github.com/FFmpeg/FFmpeg"
+    "${FETCH[@]}" "https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n$FFMPEG_VERSION.tar.gz" -o "$WORK/ffmpeg.tar"
+  fi
+  # beide Archive haben genau einen obersten Ordner (anders benannt)
+  mkdir -p "$SRC"
+  tar -xf "$WORK/ffmpeg.tar" -C "$SRC" --strip-components=1
 fi
 
 # wrapped_avframe/rawvideo: für den Encoder-Test mit -f lavfi color=…
