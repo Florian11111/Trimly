@@ -42,7 +42,18 @@ export default function App() {
   const [volume, setVolume] = useState(1);
   const [output, setOutput] = useState("both"); // both | video | audio
 
-  const [job, setJob] = useState(null); // { state: running|done|error, progress, result, message }
+  // Lautstärke nur fürs Abspielen (ändert den Export nicht), über Neustarts gemerkt
+  const [playerVolume, setPlayerVolume] = useState(loadPlayerVolume);
+  const [playerMuted, setPlayerMuted] = useState(false);
+
+  // { state: running|computed|done|error, progress, computeOnly, result, message }
+  // computed: „Nur berechnen“ ist fertig, Export legt das Ergebnis ohne neues Kodieren ab
+  const [job, setJob] = useState(null);
+  const jobRef = useRef(job);
+  jobRef.current = job;
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const platformRef = useRef(null);
+  platformRef.current = platform;
   const [dragging, setDragging] = useState(false);
   // Datei aus „Öffnen mit“, während schon ein Video offen ist: erst nachfragen
   const [pendingOpen, setPendingOpen] = useState(null);
@@ -104,6 +115,7 @@ export default function App() {
     setQuality(DEFAULT_QUALITY);
     setVolume(1);
     setOutput("both");
+    if (jobRef.current?.state === "computed") platformRef.current?.discardComputed?.(jobRef.current.result);
     setJob(null);
     setTab("trim");
     setEditorOpened(false);
@@ -332,6 +344,9 @@ export default function App() {
         case "KeyE":
           setOut();
           break;
+        case "KeyM":
+          setPlayerMuted((m) => !m);
+          break;
         default:
       }
     };
@@ -383,15 +398,40 @@ export default function App() {
   const estimate = source ? estimateBytes(target, clipLength, source, output) : 0;
   const hasAudio = video?.ref?.info ? video.ref.info.hasAudio : true;
 
-  // Lautstärke im Player mithören (Browser kann nicht über 100 % gehen)
+  // Player-Regler × Export-Lautstärke mithören (Browser kann nicht über 100 % gehen)
   useEffect(() => {
-    if (videoRef.current) videoRef.current.volume = Math.min(1, volume);
-  }, [volume, video]);
+    const v = videoRef.current;
+    if (!v) return;
+    v.volume = Math.min(1, playerVolume * Math.min(1, volume));
+    v.muted = playerMuted || playerVolume === 0;
+  }, [volume, video, playerVolume, playerMuted]);
 
-  // Geänderte Einstellungen machen ein altes Ergebnis ungültig
   useEffect(() => {
-    setJob((j) => (j?.state === "done" ? null : j));
-  }, [quality, volume, range, output, settings.codec, settings.encoder]);
+    try {
+      window.localStorage.setItem(PLAYER_VOLUME_KEY, String(playerVolume));
+    } catch {
+      // ohne Speicher eben nicht gemerkt
+    }
+  }, [playerVolume]);
+
+  // Alles, wovon ein Ergebnis abhängt. Ändert sich etwas, ist ein altes Ergebnis ungültig.
+  const paramsKey = JSON.stringify([
+    video?.src,
+    range,
+    quality,
+    volume,
+    output,
+    settings.codec,
+    settings.encoder,
+  ]);
+  const paramsKeyRef = useRef(paramsKey);
+  paramsKeyRef.current = paramsKey;
+
+  useEffect(() => {
+    const j = jobRef.current;
+    if (j?.state === "computed") platformRef.current?.discardComputed?.(j.result);
+    if (j?.state === "done" || j?.state === "computed") setJob(null);
+  }, [paramsKey]);
 
 
   // Video ohne Tonspur: nur Video exportieren
@@ -402,36 +442,80 @@ export default function App() {
     }
   }, [hasAudio, rebase]);
 
-  const runExport = async ({ askLocation = false } = {}) => {
+  // computeOnly: kodieren, aber nicht speichern („Nur berechnen“, zeigt die genaue Größe).
+  // Liegt so ein Ergebnis vor und hat sich nichts geändert, speichert Export es sofort.
+  const runExport = async ({ askLocation = false, computeOnly = false } = {}) => {
     if (!platform || !video || !target) return;
-    setJob({ state: "running", progress: desktop ? 0 : null });
-    try {
-      const result = await platform.exportVideo(
-        video,
-        {
-          start: range[0],
-          end: range[1],
-          volume,
-          target,
-          output,
-          // Zielgröße hart einhalten (Desktop kodiert nach, wenn der Encoder darüber liegt)
-          maxBytes:
-            quality.mode === "size" && output !== "audio" && Number(quality.sizeMb) > 0
-              ? Math.floor(Number(quality.sizeMb) * 1024 * 1024)
-              : null,
-        },
-        {
-          settings,
-          askLocation,
-          onProgress: (p) => setJob((j) => (j?.state === "running" ? { ...j, progress: p } : j)),
+    setExportMenuOpen(false);
+
+    const ready = jobRef.current;
+    if (!computeOnly && ready?.state === "computed") {
+      try {
+        const result = await platform.saveComputed(ready.result, { settings, askLocation });
+        if (result) setJob({ state: "done", result });
+        return;
+      } catch (e) {
+        // Web: Server hat das Ergebnis schon gelöscht → normal neu exportieren
+        if (e.message !== "expired") {
+          setJob({ state: "error", message: e.message || String(e) });
+          return;
         }
-      );
-      setJob(result ? { state: "done", result } : null);
+      }
+    }
+
+    const key = paramsKeyRef.current;
+    setJob({ state: "running", computeOnly, progress: desktop ? 0 : null });
+    try {
+      const exportJob = {
+        start: range[0],
+        end: range[1],
+        volume,
+        target,
+        output,
+        // Zielgröße hart einhalten (Desktop kodiert nach, wenn der Encoder darüber liegt)
+        maxBytes:
+          quality.mode === "size" && output !== "audio" && Number(quality.sizeMb) > 0
+            ? Math.floor(Number(quality.sizeMb) * 1024 * 1024)
+            : null,
+      };
+      const opts = {
+        settings,
+        askLocation,
+        onProgress: (p) => setJob((j) => (j?.state === "running" ? { ...j, progress: p } : j)),
+      };
+      if (computeOnly) {
+        const result = await platform.computeVideo(video, exportJob, opts);
+        // Während des Rechnens etwas geändert (oder anderes Video): Ergebnis passt nicht mehr
+        if (paramsKeyRef.current !== key) {
+          platform.discardComputed?.(result);
+          setJob((j) => (j?.state === "running" ? null : j));
+          return;
+        }
+        setJob({ state: "computed", result });
+      } else {
+        const result = await platform.exportVideo(video, exportJob, opts);
+        setJob(result ? { state: "done", result } : null);
+      }
     } catch (e) {
       const message = e.message || String(e);
       setJob(message === "cancelled" ? null : { state: "error", message });
     }
   };
+
+  // Export-Menü schließt bei Klick daneben und mit Escape
+  useEffect(() => {
+    if (!exportMenuOpen) return undefined;
+    const onDown = (e) => {
+      if (!e.target.closest?.(".export-menu")) setExportMenuOpen(false);
+    };
+    const onKey = (e) => e.key === "Escape" && setExportMenuOpen(false);
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [exportMenuOpen]);
 
   const cancelExport = () => platform?.cancel?.();
 
@@ -448,7 +532,12 @@ export default function App() {
   const codecLabel = CODECS.find((c) => c.id === codec)?.label;
 
   return (
-    <div className={`app ${isDesktop ? "is-desktop" : ""} ${IS_MAC ? "is-mac" : ""}`} {...webDrop}>
+    <div
+      className={`app ${isDesktop ? "is-desktop" : ""} ${IS_MAC ? "is-mac" : ""} ${
+        video && tab === "edit" ? "is-editing" : ""
+      }`}
+      {...webDrop}
+    >
       <div className="backdrop" aria-hidden="true">
         <span />
         <span />
@@ -574,26 +663,33 @@ export default function App() {
                 {formatTime(current)}
                 <span className="time-total"> / {formatTime(meta?.duration)}</span>
               </span>
-              <span className="history-buttons">
+              <span className="player-volume" title="Player volume. Doesn't change the export. (M)">
                 <button
                   className="btn btn-icon btn-quiet"
-                  onClick={history.undo}
-                  disabled={!history.canUndo || running}
-                  aria-label="Undo"
-                  title={`Undo (${IS_MAC ? "⌘" : "Ctrl+"}Z)`}
+                  onClick={() => {
+                    if (playerVolume === 0) {
+                      setPlayerVolume(0.5);
+                      setPlayerMuted(false);
+                    } else setPlayerMuted((m) => !m);
+                  }}
+                  aria-label={playerMuted || playerVolume === 0 ? "Unmute player" : "Mute player"}
                 >
-                  <UndoIcon />
+                  <OutputIcon kind={playerMuted || playerVolume === 0 ? "video" : "both"} />
                 </button>
-                <button
-                  className="btn btn-icon btn-quiet"
-                  onClick={history.redo}
-                  disabled={!history.canRedo || running}
-                  aria-label="Redo"
-                  title={`Redo (${IS_MAC ? "⌘⇧Z" : "Ctrl+Y"})`}
-                >
-                  <UndoIcon redo />
-                </button>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={playerMuted ? 0 : playerVolume}
+                  onChange={(e) => {
+                    setPlayerVolume(Number(e.target.value));
+                    setPlayerMuted(false);
+                  }}
+                  aria-label="Player volume"
+                />
               </span>
+              {/* Rückgängig/Wiederholen hier nur per Tastatur, Knöpfe gibt es im Editor */}
               <span className="marks">
                 <button className="mark" onClick={setIn} disabled={!meta} title="Set start to playhead (I)">
                   <span className="mark-label">Start</span>
@@ -805,7 +901,11 @@ export default function App() {
                 <p className="summary-line">Bitrate limited to the original's</p>
               )}
               <p className="summary-size">
-                <span>about {formatBytes(estimate)}</span>
+                {job?.state === "computed" ? (
+                  <span className="is-exact">exactly {formatBytes(job.result.size)}</span>
+                ) : (
+                  <span>about {formatBytes(estimate)}</span>
+                )}
                 {video && <span className="summary-original">instead of {formatBytes(video.size)}</span>}
               </p>
             </div>
@@ -817,7 +917,11 @@ export default function App() {
                 <Progress
                   value={job.progress === null ? null : Math.round(job.progress * 100)}
                   label={
-                    job.progress === null ? "Processing" : `Exporting, ${Math.round(job.progress * 100)} %`
+                    job.progress === null
+                      ? job.computeOnly
+                        ? "Calculating"
+                        : "Processing"
+                      : `${job.computeOnly ? "Calculating" : "Exporting"}, ${Math.round(job.progress * 100)} %`
                   }
                 />
                 {platform?.cancel && (
@@ -828,6 +932,36 @@ export default function App() {
               </div>
             ) : (
               <div className="export-row">
+                {platform?.computeVideo && (
+                  <div className="export-menu">
+                    <button
+                      className="btn btn-icon btn-quiet export-more"
+                      onClick={() => setExportMenuOpen((o) => !o)}
+                      disabled={!meta || clipLength <= 0}
+                      aria-haspopup="menu"
+                      aria-expanded={exportMenuOpen}
+                      aria-label="More export options"
+                      title="More export options"
+                    >
+                      <ChevronIcon />
+                    </button>
+                    {exportMenuOpen && (
+                      <div className="menu" role="menu">
+                        <button
+                          role="menuitem"
+                          className="menu-item"
+                          onClick={() => runExport({ computeOnly: true })}
+                          disabled={job?.state === "computed"}
+                        >
+                          <span className="menu-label">Calculate exact size</span>
+                          <span className="menu-hint">
+                            Encodes without saving. Keep the settings and Export is instant.
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <button
                   className={`btn btn-primary btn-block ${job?.state === "done" ? "is-done" : ""}`}
                   onClick={() => runExport()}
@@ -850,6 +984,11 @@ export default function App() {
               </div>
             )}
 
+            {job?.state === "computed" && (
+              <p className="notice notice-ready" role="status">
+                Calculated. Export saves it instantly. Changing a setting discards it.
+              </p>
+            )}
             {job?.state === "done" && (
               <div className="notice notice-done" role="status">
                 <p>
@@ -996,13 +1135,6 @@ const PauseIcon = () => (
   </svg>
 );
 
-// Bogenpfeil nach links (Rückgängig), gespiegelt für Wiederholen
-const UndoIcon = ({ redo }) => (
-  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style={redo ? { transform: "scaleX(-1)" } : undefined}>
-    <path d="M9 14l-4-4 4-4M5 10h11a4 4 0 1 1 0 8h-1" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-
 const GearIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
     <path
@@ -1014,6 +1146,24 @@ const GearIcon = () => (
     />
   </svg>
 );
+
+// Kleiner Pfeil nach oben: das Export-Menü öffnet sich über dem Knopf
+const ChevronIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+const PLAYER_VOLUME_KEY = "trimly.playerVolume";
+
+function loadPlayerVolume() {
+  try {
+    const v = Number(window.localStorage.getItem(PLAYER_VOLUME_KEY));
+    return window.localStorage.getItem(PLAYER_VOLUME_KEY) !== null && v >= 0 && v <= 1 ? v : 1;
+  } catch {
+    return 1;
+  }
+}
 
 const FolderIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">

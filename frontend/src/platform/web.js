@@ -123,7 +123,24 @@ export function createWebPlatform() {
       };
     },
 
-    async exportVideo(video, job, { onProgress } = {}) {
+    async exportVideo(video, job, opts = {}) {
+      return this.saveComputed(await this.computeVideo(video, job, opts));
+    },
+
+    // Fertiges Ergebnis herunterladen. Der Server löscht es 30 min nach Fertigstellung;
+    // ist es weg, wirft das einen Fehler und die App rechnet neu.
+    async saveComputed({ filename, savedAs, size }) {
+      const state = await (await fetch(`${API}/check/${encodeURIComponent(filename)}`)).json();
+      if (state.status !== "ready") throw new Error("expired");
+      triggerDownload(filename, savedAs);
+      return { size, savedAs };
+    },
+
+    // Nichts zu tun: der Server räumt selbst auf
+    async discardComputed() {},
+
+    // Auf dem Server kodieren, aber noch nicht herunterladen
+    async computeVideo(video, job, { onProgress } = {}) {
       onProgress?.(null);
       const ref = video.ref;
 
@@ -150,8 +167,7 @@ export function createWebPlatform() {
         if (state.status === "ready") {
           const ext = job.output === "audio" ? "mp3" : fileExtension(video.name) || "mp4";
           const savedAs = `${fileStem(video.name)}_trim.${ext}`;
-          triggerDownload(filename, savedAs);
-          return { size: state.size, savedAs };
+          return { filename, size: state.size, savedAs };
         }
         if (state.status === "error") throw new Error(`Export failed: ${state.message}`);
         if (state.status === "unknown") {

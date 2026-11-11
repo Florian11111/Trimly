@@ -69,6 +69,40 @@ const progressChannel = (onProgress) => {
   return channel;
 };
 
+// Dateiname, Endung und Startordner eines Trim-Exports
+function trimTarget(video, { target, output }) {
+  return {
+    name: `${fileStem(video.name)}_trim`,
+    ext: output === "audio" ? "mp3" : target.copy ? fileExtension(video.name) || "mp4" : "mp4",
+    kind: output === "audio" ? "Audio" : "Video",
+    sourceDir: dirName(video.ref.path),
+  };
+}
+
+function runTrim(video, job, settings, output, onProgress) {
+  const { start, end, volume, target, output: outputMode } = job;
+  return invoke("export_video", {
+    request: {
+      input: video.ref.path,
+      output,
+      start,
+      end,
+      volume,
+      copy: !!target.copy,
+      width: target.width ?? null,
+      height: target.height ?? null,
+      fps: target.fps ?? null,
+      bitrate: target.bitrate ?? null,
+      audioBitrate: target.audioBitrate ?? null,
+      streams: outputMode,
+      codec: settings?.codec || "h264",
+      encoder: settings?.encoder || "auto",
+      maxBytes: job.maxBytes ?? null,
+    },
+    onProgress: progressChannel(onProgress),
+  });
+}
+
 export function createDesktopPlatform() {
   return {
     kind: "desktop",
@@ -111,44 +145,54 @@ export function createDesktopPlatform() {
     },
 
     async exportVideo(video, job, { onProgress, settings, askLocation } = {}) {
-      const { start, end, volume, target, output: outputMode } = job;
-      const ext =
-        outputMode === "audio" ? "mp3" : target.copy ? fileExtension(video.name) || "mp4" : "mp4";
       try {
-        return await saveExport(
-          {
-            name: `${fileStem(video.name)}_trim`,
-            ext,
-            kind: outputMode === "audio" ? "Audio" : "Video",
-            sourceDir: dirName(video.ref.path),
-            settings,
-            askLocation,
-          },
-          (output) =>
-            invoke("export_video", {
-              request: {
-                input: video.ref.path,
-                output,
-                start,
-                end,
-                volume,
-                copy: !!target.copy,
-                width: target.width ?? null,
-                height: target.height ?? null,
-                fps: target.fps ?? null,
-                bitrate: target.bitrate ?? null,
-                audioBitrate: target.audioBitrate ?? null,
-                streams: outputMode,
-                codec: settings?.codec || "h264",
-                encoder: settings?.encoder || "auto",
-                maxBytes: job.maxBytes ?? null,
-              },
-              onProgress: progressChannel(onProgress),
-            })
+        return await saveExport({ ...trimTarget(video, job), settings, askLocation }, (output) =>
+          runTrim(video, job, settings, output, onProgress)
         );
       } catch (e) {
         throw asError(e);
       }
+    },
+
+    // „Nur berechnen“: in eine Temp-Datei kodieren, um die genaue Größe zu kennen.
+    // saveComputed legt sie danach ohne neues Kodieren ab, discardComputed löscht sie.
+    async computeVideo(video, job, { onProgress, settings } = {}) {
+      const info = trimTarget(video, job);
+      const temp = await invoke("temp_output", { ext: info.ext });
+      try {
+        const result = await runTrim(video, job, settings, temp, onProgress);
+        return { ...result, ...info, temp };
+      } catch (e) {
+        await invoke("discard_temp", { path: temp }).catch(() => {});
+        throw asError(e);
+      }
+    },
+
+    async saveComputed(computed, { settings, askLocation } = {}) {
+      const { name, ext, kind, sourceDir, temp, size } = computed;
+      const fileName = `${name}.${ext}`;
+      const folder = settings?.outputDir;
+      let dest;
+      try {
+        if (folder && !askLocation && (await invoke("path_exists", { path: folder }))) {
+          dest = await invoke("unique_path", { path: joinPath(folder, fileName) });
+        } else {
+          dest = await save({
+            defaultPath: joinPath(folder || sourceDir, fileName),
+            filters: [{ name: kind, extensions: [ext] }],
+          });
+          // Dialog abgebrochen: Ergebnis bleibt erhalten
+          if (!dest) return null;
+        }
+        await invoke("finalize_export", { from: temp, to: dest });
+      } catch (e) {
+        throw asError(e);
+      }
+      return { size, path: dest, savedAs: baseName(dest) };
+    },
+
+    async discardComputed(computed) {
+      if (computed?.temp) await invoke("discard_temp", { path: computed.temp }).catch(() => {});
     },
 
     // Editor-Export: Projekt aus buildRenderProject, Overlays als PNG-Blobs (overlay_0, overlay_1, …)

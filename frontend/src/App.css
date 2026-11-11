@@ -367,21 +367,6 @@
   margin-left: auto;
 }
 
-/* Rückgängig / Wiederholen, rechts vor Start/End */
-.history-buttons {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.history-buttons + .marks {
-  margin-left: 4px;
-}
-
-.history-buttons .btn-icon {
-  width: 30px;
-  height: 30px;
-}
 
 .mark {
   display: flex;
@@ -921,6 +906,97 @@ fieldset:disabled .segment {
   flex: none;
   width: 40px;
   height: 40px;
+}
+
+/* Kleiner Pfeil links vom Export-Knopf mit „Nur berechnen“ */
+.export-menu {
+  position: relative;
+  flex: none;
+}
+
+.export-row .export-more {
+  width: 28px;
+  height: 40px;
+}
+
+.export-menu .menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 260px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--popover);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: 0 24px 60px -24px var(--shadow);
+}
+
+.menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: rgba(var(--accent-rgb), 0.16);
+  outline: none;
+}
+
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.menu-label {
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.menu-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.summary-size .is-exact {
+  color: var(--accent-soft);
+}
+
+.notice-ready {
+  color: var(--muted);
+}
+
+/* Lautstärke nur für den Player, neben der Zeit */
+.player-volume {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.player-volume .btn-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.player-volume .output-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.player-volume input[type="range"] {
+  width: 76px;
 }
 
 /* ─── Einstellungen (Zahnrad) ──────────────────────────────────────────── */

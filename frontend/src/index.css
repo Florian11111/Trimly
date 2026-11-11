@@ -184,6 +184,30 @@ select {
   animation: drift-c 46s ease-in-out infinite alternate;
 }
 
+/* Editor: gleiche Lichter, aber vertauschte Farben und verschobene Lage,
+   damit man sofort sieht, in welchem Tab man ist */
+.backdrop span {
+  transition: background-color 1.2s ease, left 1.6s ease, top 1.6s ease, opacity 1.2s ease;
+}
+
+.is-editing .backdrop span:nth-child(1) {
+  left: 52vmax;
+  background: var(--blue);
+  opacity: 0.24;
+}
+
+.is-editing .backdrop span:nth-child(2) {
+  top: 34vmax;
+  background: var(--violet);
+  opacity: 0.16;
+}
+
+.is-editing .backdrop span:nth-child(3) {
+  left: 4vmax;
+  background: var(--warm);
+  opacity: 0.24;
+}
+
 @keyframes drift-a {
   to {
     transform: translate(18vmax, 12vmax) scale(1.15);
