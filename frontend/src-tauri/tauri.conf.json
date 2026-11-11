@@ -42,6 +42,18 @@
     "macOS": {
       "minimumSystemVersion": "11.0"
     },
+    "linux": {
+      "deb": {
+        "desktopTemplate": "linux/trimly.desktop",
+        "depends": ["ffmpeg", "gstreamer1.0-plugins-good", "gstreamer1.0-plugins-bad", "gstreamer1.0-libav"]
+      },
+      "rpm": {
+        "desktopTemplate": "linux/trimly.desktop"
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    },
     "fileAssociations": [
       {
         "ext": [

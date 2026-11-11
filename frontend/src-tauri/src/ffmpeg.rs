@@ -18,10 +18,47 @@ pub const HWS: &[&str] = &[
     "h264_nvenc",        // NVIDIA
     "h264_qsv",          // Intel Quick Sync
     "h264_amf",          // AMD
+    "h264_vaapi",        // Linux: Intel und AMD über VA-API
 ];
 
 /// Hardware-Familien (Suffix im ffmpeg-Namen) in Probier-Reihenfolge, wie HWS
-pub const FAMILIES: &[&str] = &["videotoolbox", "nvenc", "qsv", "amf"];
+pub const FAMILIES: &[&str] = &["videotoolbox", "nvenc", "qsv", "amf", "vaapi"];
+
+/// VA-API braucht ein Grafikgerät; Standard ist die erste Karte, `TRIMLY_VAAPI_DEVICE` wählt eine andere.
+pub fn vaapi_device() -> String {
+    std::env::var("TRIMLY_VAAPI_DEVICE").unwrap_or_else(|_| "/dev/dri/renderD128".into())
+}
+
+fn is_vaapi(encoder: &str) -> bool {
+    encoder.ends_with("_vaapi")
+}
+
+/// Globale Optionen vor den Eingaben (VA-API: Gerät öffnen)
+pub fn hw_init_args(encoder: &str) -> Vec<String> {
+    if is_vaapi(encoder) {
+        vec!["-vaapi_device".into(), vaapi_device()]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Letzter Filter vor dem Encoder: VA-API kodiert nur Bilder im Grafikspeicher (NV12)
+pub fn final_format_filter(encoder: &str) -> &'static str {
+    if is_vaapi(encoder) {
+        "format=nv12,hwupload"
+    } else {
+        "format=yuv420p"
+    }
+}
+
+/// Pixelformat der Ausgabe; bei VA-API legt das schon der Upload-Filter fest
+pub fn pix_fmt_args(encoder: &str) -> &'static [&'static str] {
+    if is_vaapi(encoder) {
+        &[]
+    } else {
+        &["-pix_fmt", "yuv420p"]
+    }
+}
 /// Ausgabe-Codecs; nur H.264 gibt es auch in Software (libx264)
 pub const CODECS: &[&str] = &["h264", "hevc", "av1"];
 
@@ -119,7 +156,7 @@ pub fn encoder_args(encoder: &str) -> &'static [&'static str] {
         "hevc_nvenc" => &["-preset", "p4", "-bf", "0", "-tag:v", "hvc1"],
         "hevc_qsv" => &["-preset", "veryfast", "-tag:v", "hvc1"],
         "hevc_amf" => &["-quality", "speed", "-tag:v", "hvc1"],
-        "hevc_videotoolbox" => &["-tag:v", "hvc1"],
+        "hevc_videotoolbox" | "hevc_vaapi" => &["-tag:v", "hvc1"],
         // -bf 0: NVENC mit B-Frames verschiebt bei 29,97-fps-Quellen die Zeitstempel,
         // viele Player zeigen dann nur ein graues Bild (siehe Backend FFmpegUtils)
         e if e.ends_with("_nvenc") => &["-preset", "p4", "-bf", "0"],
@@ -132,10 +169,13 @@ pub fn encoder_args(encoder: &str) -> &'static [&'static str] {
 /// Argumente für einen winzigen Test-Encode, der zeigt, ob ein Encoder auf diesem Rechner läuft.
 pub fn encoder_test_args(encoder: &str) -> Vec<String> {
     // 640×480: hevc_amf lehnt kleinere Bilder ab (320×240 scheitert auf einer RX 9070 XT)
-    let mut a: Vec<String> = ["-v", "error", "-f", "lavfi", "-i", "color=size=640x480:duration=0.2", "-c:v", encoder]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let mut a: Vec<String> = vec!["-v".into(), "error".into()];
+    a.extend(hw_init_args(encoder));
+    a.extend(["-f", "lavfi", "-i", "color=size=640x480:duration=0.2"].iter().map(|s| s.to_string()));
+    if is_vaapi(encoder) {
+        a.extend(["-vf".to_string(), final_format_filter(encoder).to_string()]);
+    }
+    a.extend(["-c:v".to_string(), encoder.to_string()]);
     a.extend(encoder_args(encoder).iter().map(|s| s.to_string()));
     a.extend(["-f", "null", "-"].iter().map(|s| s.to_string()));
     a
@@ -152,6 +192,7 @@ pub fn family_label(family: &str) -> &'static str {
         "nvenc" => "NVIDIA NVENC",
         "qsv" => "Intel Quick Sync",
         "amf" => "AMD AMF",
+        "vaapi" => "VA-API",
         _ => "CPU (libx264)",
     }
 }
@@ -357,6 +398,9 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
         .iter()
         .map(|s| s.to_string())
         .collect();
+    if !req.copy && req.streams != "audio" {
+        a.extend(hw_init_args(encoder));
+    }
     let mut push = |items: &[&str]| a.extend(items.iter().map(|s| s.to_string()));
 
     push(&["-ss", &num(req.start), "-to", &num(req.end), "-i", &req.input]);
@@ -387,15 +431,22 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
         push(&["-avoid_negative_ts", "make_zero"]);
     } else {
         let bitrate = req.bitrate.ok_or("The bitrate for encoding is missing.")?;
+        let mut filters: Vec<String> = Vec::new();
         if let (Some(w), Some(h)) = (req.width, req.height) {
-            push(&["-vf", &format!("scale={w}:{h}")]);
+            filters.push(format!("scale={w}:{h}"));
+        }
+        if is_vaapi(encoder) {
+            filters.push(final_format_filter(encoder).into());
+        }
+        if !filters.is_empty() {
+            push(&["-vf", &filters.join(",")]);
         }
         if let Some(fps) = req.fps.filter(|f| *f > 0.0) {
             push(&["-fpsmax", &num(fps)]);
         }
         push(&["-c:v", encoder, "-b:v", &format!("{bitrate}k")]);
         push(encoder_args(encoder));
-        push(&["-pix_fmt", "yuv420p"]);
+        push(pix_fmt_args(encoder));
         if !with_audio {
             push(&["-an"]);
         } else {
@@ -537,6 +588,22 @@ mod tests {
     fn nvenc_gets_no_b_frames() {
         let s = joined(&build_args(&request(), "h264_nvenc").unwrap());
         assert!(s.contains("-c:v h264_nvenc -b:v 2500k -preset p4 -bf 0"), "{s}");
+    }
+
+    #[test]
+    fn vaapi_opens_the_device_and_uploads_frames() {
+        assert_eq!(encoder_for("vaapi", "hevc").as_deref(), Some("hevc_vaapi"));
+        assert_eq!(encoder_label("h264_vaapi"), "VA-API");
+        let s = joined(&build_args(&request(), "h264_vaapi").unwrap());
+        assert!(s.starts_with("-hide_banner -nostats -y -progress pipe:1 -vaapi_device /dev/dri/renderD128 -ss"), "{s}");
+        assert!(s.contains("-vf scale=1280:720,format=nv12,hwupload"), "{s}");
+        assert!(!s.contains("-pix_fmt"), "{s}");
+        // Nur schneiden braucht kein Gerät
+        let copy = ExportRequest { copy: true, ..request() };
+        assert!(!joined(&build_args(&copy, "h264_vaapi").unwrap()).contains("vaapi_device"));
+        let t = encoder_test_args("h264_vaapi").join(" ");
+        assert!(t.contains("-vaapi_device /dev/dri/renderD128 -f lavfi"), "{t}");
+        assert!(t.contains("-vf format=nv12,hwupload -c:v h264_vaapi"), "{t}");
     }
 
     #[test]

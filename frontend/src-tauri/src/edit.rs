@@ -2,7 +2,7 @@
 //! Reine Logik (Prüfen, ffmpeg-Argumente bauen) ohne Prozesse, damit alles testbar ist.
 //! Das Projekt kommt von `buildRenderProject` im Frontend; `originalId` ist hier der Dateipfad.
 
-use crate::ffmpeg::{encoder_args, Crop, AUDIO_ONLY_KBPS};
+use crate::ffmpeg::{encoder_args, final_format_filter, hw_init_args, pix_fmt_args, Crop, AUDIO_ONLY_KBPS};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -286,11 +286,12 @@ pub fn build_video_args(
     }
     // Zuschnitt zuletzt, damit Zoom und Overlays im Ausschnitt so liegen wie in der Vorschau
     let crop = p.crop.map(|c| format!("{},", c.filter())).unwrap_or_default();
-    g.filters.push(format!("{current}{crop}format=yuv420p[vout]"));
+    g.filters.push(format!("{current}{crop}{}[vout]", final_format_filter(encoder)));
 
     let with_audio = p.output != "video" && add_audio(p, total, has_audio, &mut g);
 
     let mut a = head();
+    a.extend(hw_init_args(encoder));
     a.extend(g.inputs);
     a.extend(["-filter_complex".into(), g.filters.join(";"), "-map".into(), "[vout]".into()]);
     if with_audio {
@@ -299,7 +300,8 @@ pub fn build_video_args(
     }
     a.extend(["-c:v".to_string(), encoder.to_string()]);
     a.extend(encoder_args(encoder).iter().map(|s| s.to_string()));
-    a.extend(["-b:v".into(), format!("{}k", p.preset.bitrate), "-pix_fmt".into(), "yuv420p".into()]);
+    a.extend(["-b:v".into(), format!("{}k", p.preset.bitrate)]);
+    a.extend(pix_fmt_args(encoder).iter().map(|s| s.to_string()));
     a.extend(["-t".into(), num(total), "-movflags".into(), "+faststart".into(), "-f".into(), "mp4".into()]);
     a.push(out.to_string());
     a

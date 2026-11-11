@@ -2,7 +2,7 @@
 
 Videos schneiden und verkleinern. Eine React-Oberfläche, zwei Betriebsarten:
 
-- **Desktop (Tauri 2, macOS + Windows):** Rust ruft ffmpeg direkt auf der lokalen Datei auf, mit Hardware-Encoding (VideoToolbox, NVENC, Quick Sync, AMF).
+- **Desktop (Tauri 2, macOS + Windows, Linux vorbereitet):** Rust ruft ffmpeg direkt auf der lokalen Datei auf, mit Hardware-Encoding (VideoToolbox, NVENC, Quick Sync, AMF, unter Linux VA-API).
 - **Web:** Upload an ein Scala/Play-Backend, das ffmpeg im Docker-Container ausführt (optional NVENC über `docker-compose.gpu.yml`, Windows-Start per `start-trimly.bat`).
 
 Florian nutzt beides: Mac (M5) und Windows-PC mit AMD Radeon RX 9070 XT (AMF, kein NVENC).
@@ -42,6 +42,7 @@ Florian nutzt beides: Mac (M5) und Windows-PC mit AMD Radeon RX 9070 XT (AMF, ke
 - „Öffnen mit“: `bundle.fileAssociations` (Rolle Viewer, Rang `Alternate` → nie Standardprogramm). Windows übergibt die Datei als Startargument, macOS als `RunEvent::Opened` → wird in `PendingFile` gemerkt und als Event `open-file` gemeldet; die UI holt sie per `initial_file` ab (liefert jede Datei nur einmal). Testen auf dem Mac: `open --stderr log.txt -a …/Trimly.app video.mp4`. Eine Instanz: `tauri-plugin-single-instance` (muss das erste Plugin sein) gibt die Datei eines zweiten Starts per `PendingFile` + `open-file` an das laufende Fenster weiter (unter Windows getestet). Achtung beim Testen: zwei Builds mit derselben `identifier` teilen sich das.
 - Fehlersuche ohne Bildschirmzugriff: `cargo build && ./target/debug/trimly /pfad/video.mp4 2>&1 | grep '\[ui\]'` (Debug-Build lädt die UI von `localhost:3000`).
 - `tauri.conf.json`: macOS-Titelleiste als Overlay (`.is-desktop.is-mac .topbar` lässt 84 px für die Ampel-Knöpfe frei; Windows hat eine normale Titelleiste).
+- **Linux (vorbereitet, noch nicht auf echter Hardware getestet):** Builds als `.deb`, `.rpm` und AppImage (Release-Workflow, ubuntu-22.04 x64 + ARM64). ffmpeg kommt vom System (`.deb` hängt von `ffmpeg` ab). Vorschau braucht unter WebKitGTK die GStreamer-Plugins good/bad/libav, sonst bleibt das Bild schwarz; AppImage liefert sie per `bundleMediaFramework` mit. Hardware: Familie `vaapi` (Intel/AMD) – braucht `-vaapi_device` vor den Eingaben (`hw_init_args`), den Filter `format=nv12,hwupload` am Ende (`final_format_filter`) und **kein** `-pix_fmt` (`pix_fmt_args`); Gerät per `TRIMLY_VAAPI_DEVICE` (Standard `/dev/dri/renderD128`). NVENC und QSV gehen unter Linux wie gehabt. „Öffnen mit“: eigene Desktop-Vorlage `linux/trimly.desktop` mit `Exec=… %F` (Tauris Standard übergibt keine Datei), MIME-Typen aus `fileAssociations`; die Datei kommt als Startargument wie unter Windows. In einer UTM-VM auf dem Mac gibt es keine GPU, dort läuft nur libx264.
 
 ### Backend (`backend/app/video/`)
 
@@ -84,7 +85,7 @@ README-Screenshots in `docs/images/` stammen von Playwright/WebKit gegen `docker
 
 ### Release
 
-`.github/workflows/release.yml` baut bei jedem Tag `v*` die Desktop-App für Windows (`windows-latest`, mit mitgeliefertem ffmpeg, gecacht über den Hash von `build-ffmpeg.sh`) und macOS (`macos-latest`, Apple Silicon, ohne ffmpeg, nur ad-hoc signiert) und lädt die Installer in einen **Entwurfs-Release**. Der Release-Text (unsigniert, SmartScreen/Gatekeeper, GPL-Hinweis mit ffmpeg-Version) steht im Job `create-release`.
+`.github/workflows/release.yml` baut bei jedem Tag `v*` die Desktop-App für Windows (`windows-latest`, mit mitgeliefertem ffmpeg, gecacht über den Hash von `build-ffmpeg.sh`), macOS (`macos-latest`, Apple Silicon, ohne ffmpeg, nur ad-hoc signiert) und Linux (`ubuntu-22.04` und `ubuntu-22.04-arm`, `.deb`/`.rpm`/AppImage, ohne ffmpeg) und lädt die Installer in einen **Entwurfs-Release**. Der Release-Text (unsigniert, SmartScreen/Gatekeeper, GPL-Hinweis mit ffmpeg-Version) steht im Job `create-release`.
 
 1. Version in allen drei Dateien gleich erhöhen: `frontend/package.json`, `frontend/src-tauri/tauri.conf.json`, `frontend/src-tauri/Cargo.toml` (danach `cargo check` in `src-tauri`, damit `Cargo.lock` mitzieht).
 2. Committen und pushen, dann Tag setzen und pushen:
