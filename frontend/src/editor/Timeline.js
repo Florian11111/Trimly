@@ -26,8 +26,11 @@ function packLanes(items) {
   return { laneOf: result, count: Math.max(1, lanes.length) };
 }
 
+// „2× “ vor dem Namen, wenn ein Abschnitt nicht in Originaltempo läuft
+const speedLabel = (s) => (s.speed && s.speed !== 1 ? `${s.speed}× ` : "");
+
 export const overlayLabel = (o) =>
-  o.type === "arrow" ? "➜ Pfeil" : o.type === "text" ? `T ${o.text.split("\n")[0] || "Text"}` : "🖼 Bild";
+  o.type === "arrow" ? "➜ Arrow" : o.type === "text" ? `T ${o.text.split("\n")[0] || "Text"}` : "🖼 Image";
 
 export default function Timeline({
   total, time, pxPerSec, clips, videoLayout, audio, linked, overlays, zooms,
@@ -121,20 +124,20 @@ export default function Timeline({
           <div className="tl-track">
             {videoLayout.map(s => item({
               kind: "video", id: s.id, start: s.tlStart, len: s.len, className: "video",
-              label: clips[s.clipId]?.name || "Clip", canMove: false, canResize: true,
+              label: `${speedLabel(s)}${clips[s.clipId]?.name || "Clip"}`, canMove: false, canResize: true,
             }))}
           </div>
         </div>
 
         <div className="tl-row" style={{ height: rowHeight(1) }} onPointerDown={startScrub}>
-          <div className="tl-row-label">Ton{linked ? " 🔗" : ""}</div>
+          <div className="tl-row-label">Audio{linked ? " 🔗" : ""}</div>
           <div className="tl-track">
             {audio.map(s => item({
-              kind: linked ? "video" : "audio", id: s.id, start: s.tlStart, len: s.srcEnd - s.srcStart,
+              kind: linked ? "video" : "audio", id: s.id, start: s.tlStart, len: (s.srcEnd - s.srcStart) / (s.speed || 1),
               className: `audio ${linked ? "linked" : ""}`,
-              label: `${clips[s.clipId]?.name || "Ton"}${s.volume !== 1 ? ` (${Math.round(s.volume * 100)}%)` : ""}`,
+              label: `${speedLabel(s)}${clips[s.clipId]?.name || "Audio"}${s.volume !== 1 ? ` (${Math.round(s.volume * 100)}%)` : ""}`,
               canMove: !linked, canResize: !linked,
-              title: linked ? "Mit Video verbunden – „Tonspur trennen“ zum separaten Bearbeiten" : undefined,
+              title: linked ? "Linked to the video. Use “Detach audio” to edit it on its own." : undefined,
             }))}
           </div>
         </div>

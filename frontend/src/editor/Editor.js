@@ -24,7 +24,7 @@ const isTyping = (e) =>
 
 // platform: in der Desktop-App rendert Rust lokal (Clip-„ID“ = Dateipfad, kein Upload),
 // im Web geht alles über das Backend (`api`).
-export default function Editor({ api, platform, mainClip, ensureMainOriginal, active, formatFileSize }) {
+export default function Editor({ api, platform, settings, mainClip, ensureMainOriginal, active, formatFileSize }) {
   const desktop = platform?.kind === "desktop";
   const [project, setProject] = useState(P.emptyProject);
   const [originalIds, setOriginalIds] = useState({}); // clipId -> Server-ID (nicht im Undo-Verlauf)
@@ -113,14 +113,16 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
     const v = videoRef.current;
     if (v && seg) {
       const clip = p.clips[seg.clipId];
-      const srcT = Math.min(seg.srcEnd - 0.01, seg.srcStart + Math.max(0, t - seg.tlStart));
+      const speed = P.speedOf(seg);
+      const srcT = Math.min(seg.srcEnd - 0.01, seg.srcStart + Math.max(0, t - seg.tlStart) * speed);
+      if (v.playbackRate !== speed) v.playbackRate = speed;
       if (loadedUrlRef.current !== clip.url) {
         loadedUrlRef.current = clip.url;
         pendingSeekRef.current = srcT;
         v.src = clip.url;
       } else if (v.readyState >= 1) {
         if (isPlaying) {
-          if (Math.abs(v.currentTime - srcT) > 0.25) v.currentTime = srcT;
+          if (Math.abs(v.currentTime - srcT) > 0.25 * speed) v.currentTime = srcT;
           if (v.paused) v.play().catch(() => {});
         } else {
           if (!v.paused) v.pause();
@@ -146,10 +148,11 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
         entry = els[s.id] = { el, url: clip.url };
       }
       const el = entry.el;
-      const on = isPlaying && t >= s.tlStart && t < s.tlStart + (s.srcEnd - s.srcStart);
+      const on = isPlaying && t >= s.tlStart && t < s.tlStart + P.segLen(s);
       el.volume = clamp(s.volume * previewVolumeRef.current, 0, 1);
+      if (el.playbackRate !== P.speedOf(s)) el.playbackRate = P.speedOf(s);
       if (on) {
-        const target = s.srcStart + (t - s.tlStart);
+        const target = s.srcStart + (t - s.tlStart) * P.speedOf(s);
         if (el.paused) {
           el.currentTime = target;
           el.play().catch(() => {});
@@ -175,7 +178,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
     const p = projectRef.current;
     const seg = P.layoutVideo(p.videoSegs).find(s => t >= s.tlStart && t < s.tlStart + s.len);
     if (!seg || p.clips[seg.clipId]?.url !== loadedUrlRef.current) return null;
-    const vt = seg.tlStart + (v.currentTime - seg.srcStart);
+    const vt = seg.tlStart + (v.currentTime - seg.srcStart) / P.speedOf(seg);
     // Video steht noch am Ende des vorigen Abschnitts o.ä. -> Uhr behalten, syncMedia korrigiert
     if (vt < seg.tlStart || vt >= seg.tlStart + seg.len || Math.abs(vt - t) > 0.25) return null;
     return vt;
@@ -443,7 +446,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
       };
       xhr.onerror = () => {
         done();
-        reject(new Error("Server nicht erreichbar."));
+        reject(new Error("Can't reach the server."));
       };
       xhr.open("POST", `${api}/store`);
       xhr.send(formData);
@@ -456,11 +459,11 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
   const ensureClipOriginal = async (clipId, forceNew = false) => {
     if (clipId === "main") return ensureMainOriginal(forceNew);
     if (desktop) {
-      if (!originalIds[clipId]) throw new Error("Clip nicht gefunden. Bitte erneut hinzufügen.");
+      if (!originalIds[clipId]) throw new Error("Clip not found. Add it again.");
       return originalIds[clipId];
     }
     const entry = clipUploadsRef.current[clipId];
-    if (!entry) throw new Error("Clip ist nicht auf dem Server. Bitte erneut hinzufügen.");
+    if (!entry) throw new Error("This clip isn't on the server. Add it again.");
     if (!forceNew) {
       try {
         return await entry.promise;
@@ -479,10 +482,10 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
     probe.onloadedmetadata = () => {
       const clipId = P.newId("c");
       commit(p => P.addClip(p, clipId, { url, name: file.name, duration: probe.duration }));
-      uploadClip(file, clipId).catch(err => setMessage("Fehler beim Hochladen: " + err.message + " Wird beim Export erneut versucht."));
-      setMessage(`Clip „${file.name}“ hinzugefügt.`);
+      uploadClip(file, clipId).catch(err => setMessage("Error: Upload failed: " + err.message + " Trimly tries again when you export."));
+      setMessage(`Added clip “${file.name}”.`);
     };
-    probe.onerror = () => setMessage("Fehler: Video konnte nicht gelesen werden.");
+    probe.onerror = () => setMessage("Error: Trimly can't read this video.");
     probe.src = url;
   };
 
@@ -495,9 +498,9 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
         const clipId = P.newId("c");
         commit(p => P.addClip(p, clipId, { url: clip.src, name: clip.name, duration: clip.ref.info.duration }));
         setOriginalIds(ids => ({ ...ids, [clipId]: path }));
-        setMessage(`Clip „${clip.name}“ hinzugefügt.`);
+        setMessage(`Added clip “${clip.name}”.`);
       } catch (err) {
-        setMessage("Fehler: " + err.message);
+        setMessage("Error: " + err.message);
       }
       return;
     }
@@ -541,7 +544,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
       setImagesVersion(v => v + 1);
       addOverlay({ type: "image", imageKey: key, x: 0.35, y: 0.3, w: 0.3 });
     };
-    img.onerror = () => setMessage("Fehler: Bild konnte nicht geladen werden.");
+    img.onerror = () => setMessage("Error: Trimly can't load this image.");
     img.src = URL.createObjectURL(file);
   };
   const addZoom = () => {
@@ -558,8 +561,8 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
     const next = selected?.kind === "audio" ? P.splitAudioAt(p, selected.id, t) : P.splitVideoAt(p, t);
     if (next === p) {
       setMessage(selected?.kind === "audio"
-        ? "Der ausgewählte Ton-Abschnitt liegt nicht unter dem Playhead."
-        : "Am Playhead gibt es nichts zu teilen (zu nah an einem Schnitt?).");
+        ? "The selected audio clip isn't under the playhead."
+        : "Nothing to split at the playhead (too close to a cut?).");
       return;
     }
     commit(() => next);
@@ -568,7 +571,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
   const removeSelected = () => {
     if (!selected) return;
     if (selected.kind === "video" && project.videoSegs.length <= 1) {
-      setMessage("Der letzte Video-Abschnitt kann nicht gelöscht werden.");
+      setMessage("The last video clip can't be deleted.");
       return;
     }
     commit(p => P.removeItem(p, selected.kind, selected.id));
@@ -578,9 +581,9 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
   const toggleAudioLink = () => {
     if (linked) {
       commit(P.detachAudio);
-      setMessage("Tonspur getrennt: Ton-Abschnitte lassen sich jetzt unabhängig schneiden und verschieben.");
+      setMessage("Audio detached: you can now cut and move audio clips on their own.");
     } else {
-      if (!window.confirm("Tonspur wieder mit dem Video verbinden? Änderungen an der Tonspur gehen verloren.")) return;
+      if (!window.confirm("Link the audio to the video again? Changes to the audio track will be lost.")) return;
       commit(P.linkAudio);
       if (selected?.kind === "audio") setSelected(null);
     }
@@ -615,7 +618,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
 
   const handleExport = async () => {
     if (exportOutput === "audio" && !audio.length) {
-      setMessage("Fehler: Das Projekt hat keinen Ton.");
+      setMessage("Error: This project has no audio.");
       return;
     }
     setPlaying(false);
@@ -624,7 +627,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
       // Alle Clips müssen auf dem Server sein (wartet auf laufende Uploads, wiederholt fehlgeschlagene)
       const clipIds = Object.keys(project.clips);
       const ensureAll = async (forceIds = []) => {
-        if (clipIds.some(id => forceIds.includes(id) || !originalIds[id])) setMessage("Clips werden hochgeladen...");
+        if (clipIds.some(id => forceIds.includes(id) || !originalIds[id])) setMessage("Uploading clips…");
         const ids = {};
         for (const id of clipIds) ids[id] = await ensureClipOriginal(id, forceIds.includes(id));
         return ids;
@@ -633,11 +636,11 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
       try {
         ids = await ensureAll();
       } catch (err) {
-        setMessage("Fehler beim Hochladen: " + err.message);
+        setMessage("Error: Upload failed: " + err.message);
         return;
       }
 
-      setMessage("Overlays werden vorbereitet...");
+      setMessage("Preparing overlays…");
       const { body, overlays } = P.buildRenderProject(project, exportDims, ids, exportOutput);
       const overlayBlobs = [];
       for (let i = 0; i < overlays.length; i++) {
@@ -645,13 +648,13 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
       }
 
       if (desktop) {
-        const label = exportOutput === "audio" ? "Ton wird exportiert" : "Video wird gerendert";
+        const label = exportOutput === "audio" ? "Exporting audio" : "Rendering video";
         setMessage(`${label} …`);
         const result = await platform.renderEdit(
-          { project: body, overlays: overlayBlobs, name: mainClip?.name || "video", output: exportOutput },
+          { project: body, overlays: overlayBlobs, name: mainClip?.name || "video", output: exportOutput, sourcePath: mainClip?.path, settings },
           { onProgress: (p) => setMessage(`${label} … ${Math.round(p * 100)} %`) }
         );
-        setMessage(result ? `Export fertig (${formatFileSize(result.size)}): ${result.savedAs}` : "");
+        setMessage(result ? `Export done (${formatFileSize(result.size)}): ${result.savedAs}` : "");
         return;
       }
       const render = async (renderBody) => {
@@ -661,7 +664,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
         return (await fetch(`${api}/render`, { method: "POST", body: formData })).json();
       };
 
-      setMessage(exportOutput === "audio" ? "Ton wird exportiert..." : "Video wird gerendert...");
+      setMessage(exportOutput === "audio" ? "Exporting audio…" : "Rendering video…");
       let result = await render(body);
       // Server kennt Clips nicht mehr (abgelaufen / neu gestartet): neu hochladen, nochmal versuchen
       if (result.status !== "success" && result.missing?.length) {
@@ -669,14 +672,14 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
         try {
           ids = await ensureAll(forceIds);
         } catch (err) {
-          setMessage("Fehler beim Hochladen: " + err.message);
+          setMessage("Error: Upload failed: " + err.message);
           return;
         }
-        setMessage(exportOutput === "audio" ? "Ton wird exportiert..." : "Video wird gerendert...");
+        setMessage(exportOutput === "audio" ? "Exporting audio…" : "Rendering video…");
         result = await render(P.buildRenderProject(project, exportDims, ids, exportOutput).body);
       }
       if (result.status !== "success") {
-        setMessage("Fehler: " + result.message);
+        setMessage("Error: " + result.message);
         return;
       }
       const filename = result.filename;
@@ -696,14 +699,14 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
           document.body.appendChild(a);
           a.click();
           a.remove();
-          setMessage(`Export fertig (${formatFileSize(d.size)}), Download gestartet!`);
+          setMessage(`Export done (${formatFileSize(d.size)}), download started.`);
           return;
         }
-        if (d.status === "error") { setMessage("Fehler beim Rendern: " + d.message); return; }
-        if (d.status === "unknown") { setMessage("Fehler: Auftrag unbekannt (Server neu gestartet?)."); return; }
+        if (d.status === "error") { setMessage("Error: Rendering failed: " + d.message); return; }
+        if (d.status === "unknown") { setMessage("Error: The server lost this export (was it restarted?)."); return; }
       }
     } catch (err) {
-      setMessage("Fehler: " + err.message);
+      setMessage("Error: " + err.message);
     } finally {
       setExporting(false);
     }
@@ -711,8 +714,22 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
 
   // ─── Eigenschaften des ausgewählten Elements ─────────────────────────────
 
+  // Tempo eines Video- oder Ton-Abschnitts; für ein Stück: vorher mit „Split“ abtrennen
+  const speedPicker = (s) => (
+    <div className="ed-prop ed-speed" role="radiogroup" aria-label="Speed">
+      <span>Speed</span>
+      {P.SPEEDS.map(v => (
+        <button key={v} type="button" role="radio" aria-checked={P.speedOf(s) === v}
+          className={`ed-btn ed-btn-small ${P.speedOf(s) === v ? "primary" : ""}`}
+          onClick={() => updateSelected({ speed: v })}>
+          {v}×
+        </button>
+      ))}
+    </div>
+  );
+
   const renderProperties = () => {
-    if (!selected) return <p className="ed-hint">Element in der Timeline oder im Bild anklicken, um es zu bearbeiten.</p>;
+    if (!selected) return <p className="ed-hint">Click an item in the timeline or the picture to edit it.</p>;
     if (selected.kind === "video") {
       const s = project.videoSegs.find(x => x.id === selected.id);
       if (!s) return null;
@@ -720,17 +737,18 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
       return (
         <>
           <div className="ed-prop-title">🎬 {project.clips[s.clipId]?.name}</div>
-          <div className="ed-prop">Länge: {(s.srcEnd - s.srcStart).toFixed(1)} s</div>
+          <div className="ed-prop">Length: {P.segLen(s).toFixed(1)} s</div>
+          {speedPicker(s)}
           {linked && (
-            <label className="ed-prop">Lautstärke
+            <label className="ed-prop">Volume
               <input type="range" min="0" max="2" step="0.05" value={s.volume}
                 onChange={(e) => updateSelected({ volume: parseFloat(e.target.value) })} />
               <span>{Math.round(s.volume * 100)}%</span>
             </label>
           )}
           <div className="ed-prop">
-            <button type="button" className="ed-btn" disabled={i === 0} onClick={() => commit(p => P.moveVideoSeg(p, s.id, -1))}>◀ nach vorne</button>
-            <button type="button" className="ed-btn" disabled={i === project.videoSegs.length - 1} onClick={() => commit(p => P.moveVideoSeg(p, s.id, 1))}>nach hinten ▶</button>
+            <button type="button" className="ed-btn" disabled={i === 0} onClick={() => commit(p => P.moveVideoSeg(p, s.id, -1))}>◀ Move earlier</button>
+            <button type="button" className="ed-btn" disabled={i === project.videoSegs.length - 1} onClick={() => commit(p => P.moveVideoSeg(p, s.id, 1))}>Move later ▶</button>
           </div>
         </>
       );
@@ -740,9 +758,10 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
       if (!s) return null;
       return (
         <>
-          <div className="ed-prop-title">🔊 Ton: {project.clips[s.clipId]?.name}</div>
-          <div className="ed-prop">Start: {s.tlStart.toFixed(1)} s · Länge: {(s.srcEnd - s.srcStart).toFixed(1)} s</div>
-          <label className="ed-prop">Lautstärke
+          <div className="ed-prop-title">🔊 Audio: {project.clips[s.clipId]?.name}</div>
+          <div className="ed-prop">Start: {s.tlStart.toFixed(1)} s · Length: {P.segLen(s).toFixed(1)} s</div>
+          {speedPicker(s)}
+          <label className="ed-prop">Volume
             <input type="range" min="0" max="2" step="0.05" value={s.volume}
               onChange={(e) => updateSelected({ volume: parseFloat(e.target.value) })} />
             <span>{Math.round(s.volume * 100)}%</span>
@@ -757,7 +776,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
         <>
           <div className="ed-prop-title">🔍 Zoom</div>
           <div className="ed-prop">{z.start.toFixed(1)} s – {z.end.toFixed(1)} s</div>
-          <label className="ed-prop">Stärke
+          <label className="ed-prop">Strength
             <input type="range" min="1.1" max="5" step="0.1" value={1 / z.w}
               onChange={(e) => {
                 const w = 1 / parseFloat(e.target.value);
@@ -765,7 +784,7 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
               }} />
             <span>{(1 / z.w).toFixed(1)}x</span>
           </label>
-          <p className="ed-hint">Gelben Rahmen im Bild verschieben bzw. am Punkt unten rechts größer/kleiner ziehen.</p>
+          <p className="ed-hint">Move the frame in the picture, drag the dot at the bottom right to resize it.</p>
         </>
       );
     }
@@ -781,35 +800,35 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
           </label>
         )}
         {o.type !== "image" && (
-          <label className="ed-prop">Farbe
+          <label className="ed-prop">Color
             <input type="color" value={o.color} onChange={(e) => updateSelected({ color: e.target.value })} />
           </label>
         )}
         {o.type === "text" && (
-          <label className="ed-prop">Größe
+          <label className="ed-prop">Size
             <input type="range" min="0.03" max="0.25" step="0.005" value={o.size}
               onChange={(e) => updateSelected({ size: parseFloat(e.target.value) })} />
           </label>
         )}
         {o.type === "arrow" && (
-          <label className="ed-prop">Dicke
+          <label className="ed-prop">Thickness
             <input type="range" min="0.004" max="0.04" step="0.001" value={o.thickness}
               onChange={(e) => updateSelected({ thickness: parseFloat(e.target.value) })} />
           </label>
         )}
         {o.type === "image" && (
-          <label className="ed-prop">Größe
+          <label className="ed-prop">Size
             <input type="range" min="0.05" max="1" step="0.01" value={o.w}
               onChange={(e) => updateSelected({ w: parseFloat(e.target.value) })} />
           </label>
         )}
-        <p className="ed-hint">Im Bild verschieben{o.type === "arrow" ? ", Enden an den Punkten ziehen" : ""}.</p>
+        <p className="ed-hint">Move it in the picture{o.type === "arrow" ? ", drag the dots to move the ends" : ""}.</p>
       </>
     );
   };
 
   if (!mainClip) {
-    return <div className="ed-empty">Lade zuerst ein Video im Tab „Schneiden“.</div>;
+    return <div className="ed-empty">Load a video in the Trim tab first.</div>;
   }
 
   return (
@@ -825,36 +844,36 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
         <div className="ed-side">
           <div className="ed-panel">{renderProperties()}</div>
           {(selected && (selected.kind !== "video" || project.videoSegs.length > 1)) && (
-            <button type="button" className="ed-btn danger" onClick={removeSelected}>🗑 Löschen</button>
+            <button type="button" className="ed-btn danger" onClick={removeSelected}>🗑 Delete</button>
           )}
         </div>
       </div>
 
       <div className="ed-transport">
         <button type="button" className="ed-btn primary" onClick={() => setPlaying(p => !p)}>
-          {playing ? "⏸ Pause" : "▶ Abspielen"}
+          {playing ? "⏸ Pause" : "▶ Play"}
         </button>
         <span className="ed-time">{time.toFixed(1)} / {total.toFixed(1)} s</span>
         <label className="ed-inline">🔈
           <input type="range" min="0" max="1" step="0.01" value={previewVolume}
-            aria-label="Vorschau-Lautstärke" onChange={(e) => setPreviewVolume(parseFloat(e.target.value))} />
+            aria-label="Preview volume" onChange={(e) => setPreviewVolume(parseFloat(e.target.value))} />
         </label>
         <label className="ed-inline">Timeline
           <input type="range" min="1" max="20" step="0.5" value={timelineZoom}
-            aria-label="Timeline-Zoom" onChange={(e) => setTimelineZoom(parseFloat(e.target.value))} />
+            aria-label="Timeline zoom" onChange={(e) => setTimelineZoom(parseFloat(e.target.value))} />
         </label>
-        <button type="button" className="ed-btn" onClick={undo} disabled={!historyRef.current.length} title="Strg+Z">↶ Rückgängig</button>
+        <button type="button" className="ed-btn" onClick={undo} disabled={!historyRef.current.length} title="Ctrl+Z">↶ Undo</button>
       </div>
 
       <div className="ed-toolbar">
-        <button type="button" className="ed-btn" onClick={split} title="Taste S">✂ Teilen</button>
+        <button type="button" className="ed-btn" onClick={split} title="Key S">✂ Split</button>
         <button type="button" className="ed-btn" onClick={toggleAudioLink}>
-          {linked ? "🔊 Tonspur trennen" : "🔗 Tonspur verbinden"}
+          {linked ? "🔊 Detach audio" : "🔗 Link audio"}
         </button>
         <button type="button" className="ed-btn" onClick={pickClip}>＋ Clip</button>
-        <button type="button" className="ed-btn" onClick={addArrow}>➜ Pfeil</button>
+        <button type="button" className="ed-btn" onClick={addArrow}>➜ Arrow</button>
         <button type="button" className="ed-btn" onClick={addText}>T Text</button>
-        <button type="button" className="ed-btn" onClick={() => imageInputRef.current?.click()}>🖼 Bild</button>
+        <button type="button" className="ed-btn" onClick={() => imageInputRef.current?.click()}>🖼 Image</button>
         <button type="button" className="ed-btn" onClick={addZoom}>🔍 Zoom</button>
         <input ref={videoInputRef} type="file" accept="video/*" style={{ display: "none" }}
           onChange={(e) => { addClipFile(e.target.files[0]); e.target.value = ""; }} />
@@ -884,11 +903,11 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
 
       <div className="ed-export">
         <strong>Export</strong>
-        <select className="ed-select" value={exportOutput} aria-label="Ausgabe"
+        <select className="ed-select" value={exportOutput} aria-label="Output"
           onChange={(e) => setExportOutput(e.target.value)}>
           <option value="both">Video + Audio</option>
-          <option value="video">Nur Video</option>
-          <option value="audio">Nur Audio (MP3)</option>
+          <option value="video">Video only</option>
+          <option value="audio">Audio only (MP3)</option>
         </select>
         {exportOutput !== "audio" && EXPORT_PRESETS.map(key => (
           <button key={key} type="button" className={`ed-btn ${exportPreset === key ? "primary" : ""}`}
@@ -898,17 +917,17 @@ export default function Editor({ api, platform, mainClip, ensureMainOriginal, ac
         ))}
         <span className="ed-hint">
           {exportOutput === "audio"
-            ? "MP3, 192 kbps"
+            ? "MP3, 192 kbit/s"
             : `${PRESETS[exportPreset].resolution}, ${PRESETS[exportPreset].fps} FPS`} · ≈ {formatFileSize(estimatedBytes)}
         </span>
         <button type="button" className="ed-btn export" onClick={handleExport} disabled={exporting || total < 0.1}>
-          {exporting ? "⏳ Exportiere..." : "⬇ Exportieren"}
+          {exporting ? "⏳ Exporting…" : "⬇ Export"}
         </button>
       </div>
       {exportOutput === "both" && audio.length > 0 && !audioInVideo && (
-        <p className="ed-message error">⚠ Der Ton liegt komplett hinter dem Videoende – das Video wäre stumm. Ton auf der Timeline nach vorne ziehen oder „Nur Audio“ wählen.</p>
+        <p className="ed-message error">⚠ The audio starts after the end of the video, so the video would be silent. Move the audio earlier on the timeline or choose “Audio only”.</p>
       )}
-      {message && <p className={`ed-message ${message.includes("Fehler") ? "error" : ""}`}>{message}</p>}
+      {message && <p className={`ed-message ${message.startsWith("Error") ? "error" : ""}`}>{message}</p>}
     </div>
   );
 }

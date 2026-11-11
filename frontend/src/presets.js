@@ -1,8 +1,8 @@
 // Einzige Quelle für Preset-Werte: wird angezeigt UND ans Backend gesendet
 export const PRESETS = {
-  low:    { label: "LOW",    fps: 24, resolution: "854x480",   bitrate: 1000 },
-  medium: { label: "MEDIUM", fps: 30, resolution: "1280x720",  bitrate: 2500 },
-  high:   { label: "HIGH",   fps: 60, resolution: "1920x1080", bitrate: 5000 },
+  low:    { label: "Small",  fps: 24, resolution: "854x480",   bitrate: 1000 },
+  medium: { label: "Medium", fps: 30, resolution: "1280x720",  bitrate: 2500 },
+  high:   { label: "High",   fps: 60, resolution: "1920x1080", bitrate: 5000 },
 };
 
 export const RESOLUTION_OPTIONS = [

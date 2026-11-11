@@ -60,10 +60,10 @@ test('render project uses server ids and drops items past the end', () => {
   const { body, overlays } = P.buildRenderProject(p, { width: 1280, height: 720, fps: 30, bitrate: 2500 },
     { main: 'srvA', c2: 'srvB' });
   expect(body.video).toEqual([
-    { originalId: 'srvA', start: 0, end: 10 },
-    { originalId: 'srvB', start: 0, end: 5 },
+    { originalId: 'srvA', start: 0, end: 10, speed: 1 },
+    { originalId: 'srvB', start: 0, end: 5, speed: 1 },
   ]);
-  expect(body.audio[1]).toEqual({ originalId: 'srvB', start: 0, end: 5, at: 10, volume: 1 });
+  expect(body.audio[1]).toEqual({ originalId: 'srvB', start: 0, end: 5, at: 10, volume: 1, speed: 1 });
   expect(overlays.map(o => o.id)).toEqual(['o1']);
   expect(body.overlays).toEqual([{ file: 'overlay_0', start: 1, end: 3 }]);
   expect(body.zooms[0].end).toBe(15);
@@ -89,6 +89,37 @@ test('audio-only export keeps detached audio that lies behind the video end', ()
   expect(P.buildRenderProject(p, preset, ids).body.audio).toEqual([]);
   const { body } = P.buildRenderProject(p, preset, ids, 'audio');
   expect(body.output).toBe('audio');
-  expect(body.audio).toEqual([{ originalId: 'srvA', start: 4, end: 10, at: 4, volume: 1 }]);
+  expect(body.audio).toEqual([{ originalId: 'srvA', start: 4, end: 10, at: 4, volume: 1, speed: 1 }]);
   expect(P.audioDuration(p)).toBe(10);
+});
+
+test('speed changes the timeline length, linked audio follows', () => {
+  let p = P.splitVideoAt(base(), 4);
+  p = P.updateItem(p, 'video', p.videoSegs[1].id, { speed: 2 });
+  // 4 s normal + 6 s doppelt so schnell = 7 s
+  expect(P.totalDuration(p)).toBe(7);
+  expect(P.layoutVideo(p.videoSegs)[1]).toMatchObject({ tlStart: 4, len: 3 });
+  expect(P.effectiveAudio(p)[1]).toMatchObject({ tlStart: 4, speed: 2 });
+  expect(P.audioDuration(p)).toBe(7);
+});
+
+test('splitting a fast segment cuts at the right source time', () => {
+  let p = P.updateItem(base(), 'video', base().videoSegs[0].id, { speed: 2 });
+  p = P.updateItem(p, 'video', p.videoSegs[0].id, { speed: 2 });
+  p = P.splitVideoAt(p, 2); // 2 s auf der Timeline = 4 s im Clip
+  expect(p.videoSegs[0]).toMatchObject({ srcStart: 0, srcEnd: 4, speed: 2 });
+  expect(p.videoSegs[1]).toMatchObject({ srcStart: 4, srcEnd: 10, speed: 2 });
+});
+
+test('dragging a fast segment edge moves the source by dt times speed', () => {
+  const seg = { srcStart: 2, srcEnd: 8, speed: 4 };
+  expect(P.dragPatch('video', 'end', seg, -1, { clipDuration: 10 })).toEqual({ srcEnd: 4 });
+});
+
+test('render project sends the speed of video and audio', () => {
+  const p = P.updateItem(base(), 'video', base().videoSegs[0].id, { speed: 0.5 });
+  const { body } = P.buildRenderProject(P.updateItem(p, 'video', p.videoSegs[0].id, { speed: 0.5 }),
+    { width: 1280, height: 720, fps: 30, bitrate: 2500 }, { main: 'srvA' });
+  expect(body.video[0].speed).toBe(0.5);
+  expect(body.audio[0].speed).toBe(0.5);
 });

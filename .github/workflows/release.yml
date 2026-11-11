@@ -1,0 +1,160 @@
+# Baut die Desktop-App (Tauri 2) für Windows und macOS und legt einen Entwurfs-Release an.
+# Auslöser: ein Tag wie v0.2.0. Ablauf siehe CLAUDE.md, Abschnitt „Release“.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Legt den Entwurf einmal an; beide Build-Jobs laden in denselben hoch
+  # (sonst können sie gleichzeitig je einen eigenen Entwurf anlegen).
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Write release notes
+        shell: bash
+        run: |
+          # ffmpeg-Version für den GPL-Hinweis
+          FFMPEG=$(sed -n 's/^FFMPEG_VERSION="\${FFMPEG_VERSION:-\(.*\)}"$/\1/p' frontend/src-tauri/scripts/build-ffmpeg.sh)
+          SCRIPT_URL="https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/frontend/src-tauri/scripts/build-ffmpeg.sh"
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          ## Download
+
+          - **Windows:** \`Trimly_…_x64-setup.exe\` (or the \`.msi\`). ffmpeg is included.
+          - **macOS (Apple Silicon):** \`Trimly_…_aarch64.dmg\`. Needs ffmpeg: \`brew install ffmpeg\`.
+
+          ## Unsigned builds
+
+          These installers are not code-signed, so your system will warn you once:
+
+          - **Windows (SmartScreen):** click **More info → Run anyway** („Weitere Informationen → Trotzdem ausführen“).
+          - **macOS:** right-click Trimly in Applications → **Open** → **Open**. On macOS 15 or newer, try to open it once, then click **Open Anyway** in **System Settings → Privacy & Security**.
+            Alternative: \`xattr -dr com.apple.quarantine /Applications/Trimly.app\`
+
+          ## License of the bundled ffmpeg (Windows)
+
+          The Windows installer ships a minimal static build of [FFmpeg](https://ffmpeg.org) $FFMPEG with libx264, licensed under the **GPL v3**. Trimly runs it as a separate program.
+
+          - FFmpeg source code: https://ffmpeg.org/releases/ffmpeg-$FFMPEG.tar.xz
+          - Build script with all configure options: [build-ffmpeg.sh]($SCRIPT_URL)
+          EOF
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Create draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$GITHUB_REF_NAME" \
+            -f name="Trimly $GITHUB_REF_NAME" \
+            -F draft=true \
+            -F body=@"$RUNNER_TEMP/notes.md" \
+            --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            platform: windows-latest
+          - name: macOS (Apple Silicon)
+            platform: macos-latest
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # --- Mitgeliefertes ffmpeg (nur Windows) ---------------------------------
+      # Der Build dauert lange, darum gecacht; neu gebaut wird nur, wenn sich das Skript ändert.
+      - name: Cache bundled ffmpeg
+        if: runner.os == 'Windows'
+        id: ffmpeg-cache
+        uses: actions/cache@v6
+        with:
+          path: frontend/src-tauri/binaries/ffmpeg-*
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/scripts/build-ffmpeg.sh') }}
+
+      - name: Set up MSYS2 (UCRT64)
+        if: runner.os == 'Windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          # wie im Kopf von scripts/build-ffmpeg.sh
+          install: >-
+            make
+            diffutils
+            git
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-x264
+            mingw-w64-ucrt-x86_64-lame
+            mingw-w64-ucrt-x86_64-dav1d
+            mingw-w64-ucrt-x86_64-amf-headers
+            mingw-w64-ucrt-x86_64-ffnvcodec-headers
+            mingw-w64-ucrt-x86_64-libvpl
+
+      - name: Build bundled ffmpeg
+        if: runner.os == 'Windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        working-directory: frontend/src-tauri
+        run: bash scripts/build-ffmpeg.sh
+
+      - name: Check bundled ffmpeg
+        if: runner.os == 'Windows'
+        shell: bash
+        working-directory: frontend/src-tauri/binaries
+        run: |
+          ls -lh
+          ./ffmpeg-x86_64-pc-windows-msvc.exe -hide_banner -version | head -n 1
+          ./ffprobe-x86_64-pc-windows-msvc.exe -hide_banner -version | head -n 1
+
+      # --- Werkzeuge ------------------------------------------------------------
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri -> target
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # --- Bauen und hochladen --------------------------------------------------
+      - name: Build and upload to draft release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GitHub setzt CI=true, dann bricht Create React App schon bei ESLint-Warnungen ab
+          CI: false
+          # macOS: ad-hoc signieren (kein Apple-Zertifikat). Ganz ohne Signatur meldet
+          # macOS auf Apple Silicon „beschädigt“ statt nur „nicht verifizierter Entwickler“.
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        with:
+          projectPath: frontend
+          releaseId: ${{ needs.create-release.outputs.id }}

@@ -9,26 +9,27 @@ use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::ipc::Channel;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 #[cfg(target_os = "macos")]
-const MISSING_FFMPEG: &str =
-    "ffmpeg wurde nicht gefunden. Installiere es im Terminal mit: brew install ffmpeg";
+const MISSING_FFMPEG: &str = "ffmpeg wasn't found. Install it in Terminal with: brew install ffmpeg";
 #[cfg(windows)]
 const MISSING_FFMPEG: &str =
-    "ffmpeg wurde nicht gefunden. Installiere es in der Eingabeaufforderung mit: winget install ffmpeg";
+    "ffmpeg wasn't found. Reinstall Trimly or install ffmpeg in a command prompt with: winget install ffmpeg";
 #[cfg(not(any(target_os = "macos", windows)))]
-const MISSING_FFMPEG: &str = "ffmpeg wurde nicht gefunden. Installiere es über die Paketverwaltung.";
+const MISSING_FFMPEG: &str = "ffmpeg wasn't found. Install it with your package manager.";
 
 pub const CANCELLED: &str = "cancelled";
 
 struct Tools {
     ffmpeg: Option<PathBuf>,
     ffprobe: Option<PathBuf>,
-    encoder: &'static str,
+    /// Encoder, deren Test-Encode durchlief, in Probier-Reihenfolge (ohne libx264, das geht immer)
+    working: Vec<String>,
 }
 
 /// ffmpeg/ffprobe starten, ohne dass unter Windows jedes Mal ein Konsolenfenster aufblitzt.
@@ -61,20 +62,20 @@ fn tools() -> &'static Tools {
         let ffmpeg = ffmpeg::find_tool("ffmpeg");
         // TRIMLY_ENCODER=cpu erzwingt Software-Kodierung (wie im Backend)
         let forced_cpu = std::env::var("TRIMLY_ENCODER").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
-        let encoder = match (&ffmpeg, forced_cpu) {
+        let working = match (&ffmpeg, forced_cpu) {
             (Some(path), false) => tool_command(path)
                 .args(["-hide_banner", "-encoders"])
                 .output()
                 .ok()
-                .map(|o| ffmpeg::listed_hw_encoders(&String::from_utf8_lossy(&o.stdout)))
+                .map(|o| ffmpeg::listed_hw_encoders_all(&String::from_utf8_lossy(&o.stdout)))
                 .unwrap_or_default()
                 .into_iter()
-                .find(|e| encoder_works(path, e))
-                .unwrap_or(ffmpeg::SW_ENCODER),
-            _ => ffmpeg::SW_ENCODER,
+                .filter(|e| encoder_works(path, e))
+                .collect(),
+            _ => Vec::new(),
         };
-        eprintln!("[ffmpeg] {:?}, Encoder: {encoder}", ffmpeg);
-        Tools { ffmpeg, ffprobe: ffmpeg::find_tool("ffprobe"), encoder }
+        eprintln!("[ffmpeg] {:?}, Hardware: {working:?}", ffmpeg);
+        Tools { ffmpeg, ffprobe: ffmpeg::find_tool("ffprobe"), working }
     })
 }
 
@@ -92,12 +93,23 @@ struct PendingFile {
     argv_used: Mutex<bool>,
 }
 
+/// Ein Gerät zur Auswahl in den Einstellungen und welche Codecs es kann.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EncoderOption {
+    id: String,
+    label: String,
+    codecs: Vec<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EncoderInfo {
     label: String,
     hardware: bool,
     ffmpeg: Option<String>,
+    /// Hardware-Geräte mit ihren Codecs; libx264 (nur H.264) gibt es zusätzlich immer
+    options: Vec<EncoderOption>,
 }
 
 #[derive(Serialize)]
@@ -110,23 +122,43 @@ struct ExportResult {
 
 /// Async, damit das Warten auf den Encoder-Test nicht den Haupt-Thread (und damit das Fenster) blockiert.
 #[tauri::command]
-async fn encoder_info() -> Result<EncoderInfo, String> {
-    tauri::async_runtime::spawn_blocking(encoder_info_blocking).await.map_err(|e| e.to_string())
+async fn encoder_info(codec: Option<String>, encoder: Option<String>) -> Result<EncoderInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        encoder_info_blocking(&codec.unwrap_or_else(ffmpeg::default_codec), &encoder.unwrap_or_else(ffmpeg::default_auto))
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
-fn encoder_info_blocking() -> EncoderInfo {
+fn encoder_info_blocking(codec: &str, preference: &str) -> EncoderInfo {
     let t = tools();
-    let hardware = t.ffmpeg.is_some() && ffmpeg::is_hardware(t.encoder);
+    let chosen = ffmpeg::pick_encoder(&t.working, codec, preference);
+    let hardware = t.ffmpeg.is_some() && ffmpeg::is_hardware(&chosen);
     let label = match &t.ffmpeg {
         None => MISSING_FFMPEG.to_string(),
-        Some(_) if hardware => format!("Kodierung mit {} (Hardware)", ffmpeg::encoder_label(t.encoder)),
-        Some(_) => "Kodierung mit libx264 (Software)".to_string(),
+        Some(_) if hardware => format!("Encoding with {} (hardware)", ffmpeg::encoder_label(&chosen)),
+        Some(_) => "Encoding with libx264 (software)".to_string(),
     };
-    EncoderInfo { label, hardware, ffmpeg: t.ffmpeg.as_ref().map(|p| p.display().to_string()) }
+    let options = ffmpeg::FAMILIES
+        .iter()
+        .filter_map(|f| {
+            let codecs: Vec<String> = ffmpeg::CODECS
+                .iter()
+                .filter(|c| ffmpeg::encoder_for(f, c).is_some_and(|e| t.working.contains(&e)))
+                .map(|c| c.to_string())
+                .collect();
+            (!codecs.is_empty()).then(|| EncoderOption {
+                id: f.to_string(),
+                label: ffmpeg::family_label(f).to_string(),
+                codecs,
+            })
+        })
+        .collect();
+    EncoderInfo { label, hardware, ffmpeg: t.ffmpeg.as_ref().map(|p| p.display().to_string()), options }
 }
 
-/// Datei, mit der Trimly geöffnet wurde: „Öffnen mit“ auf macOS (Ereignis) oder
-/// Startargument (Windows-Dateizuordnung, `Trimly video.mp4`). Liefert sie nur einmal.
+/// Datei, mit der Trimly geöffnet wurde: „Öffnen mit“ auf macOS (Ereignis), zweiter Start
+/// unter Windows (Single-Instance) oder Startargument. Liefert sie nur einmal.
 #[tauri::command]
 fn initial_file(pending: State<'_, PendingFile>) -> Option<String> {
     if let Some(path) = pending.path.lock().unwrap().take() {
@@ -137,7 +169,11 @@ fn initial_file(pending: State<'_, PendingFile>) -> Option<String> {
         return None;
     }
     *used = true;
-    std::env::args().skip(1).find(|a| !a.starts_with('-') && Path::new(a).is_file())
+    file_arg(std::env::args().skip(1))
+}
+
+fn file_arg(args: impl IntoIterator<Item = String>) -> Option<String> {
+    args.into_iter().find(|a| !a.starts_with('-') && Path::new(a).is_file())
 }
 
 /// Meldungen der Oberfläche im Terminal ausgeben (Fehlersuche).
@@ -151,7 +187,7 @@ fn frontend_log(message: String) {
 fn media_url(path: String, server: State<'_, MediaServer>) -> Result<String, String> {
     let p = PathBuf::from(&path);
     if !p.is_file() {
-        return Err("Die Datei gibt es nicht mehr.".into());
+        return Err("This file doesn't exist anymore.".into());
     }
     Ok(server.register(&p))
 }
@@ -162,9 +198,9 @@ fn probe_file(path: &str) -> Result<VideoInfo, String> {
         .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
         .arg(path)
         .output()
-        .map_err(|e| format!("ffprobe konnte nicht gestartet werden: {e}"))?;
+        .map_err(|e| format!("ffprobe couldn't start: {e}"))?;
     if !out.status.success() {
-        return Err("Diese Datei kann nicht gelesen werden. Ist es ein Video?".to_string());
+        return Err("Trimly can't read this file. Is it a video?".to_string());
     }
     ffmpeg::parse_probe(&String::from_utf8_lossy(&out.stdout))
 }
@@ -188,7 +224,7 @@ fn run_ffmpeg(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("ffmpeg konnte nicht gestartet werden: {e}"))?;
+        .map_err(|e| format!("ffmpeg couldn't start: {e}"))?;
 
     let stdout = child.stdout.take().expect("stdout ist gepiped");
     let mut stderr = child.stderr.take().expect("stderr ist gepiped");
@@ -225,7 +261,25 @@ fn run_ffmpeg(
     }
     match status {
         Some(Ok(s)) if s.success() => Ok(()),
-        _ => Err(format!("ffmpeg ist fehlgeschlagen:\n{stderr_tail}")),
+        _ => Err(format!("ffmpeg failed:\n{stderr_tail}")),
+    }
+}
+
+/// Erst mit dem gewählten Encoder, bei Fehlern (Hardware zickt bei 10 bit, exotischer Auflösung …)
+/// noch einmal mit libx264. Liefert den Encoder, der es geschafft hat.
+fn encode_with_fallback(
+    encoder: &str,
+    on_progress: &Channel<f64>,
+    run: &dyn Fn(&str) -> Result<(), String>,
+) -> Result<String, String> {
+    match run(encoder) {
+        Ok(()) => Ok(encoder.to_string()),
+        Err(e) if e != CANCELLED && ffmpeg::is_hardware(encoder) => {
+            eprintln!("[ffmpeg] {encoder} fehlgeschlagen, nutze libx264: {e}");
+            let _ = on_progress.send(0.0);
+            run(ffmpeg::SW_ENCODER).map(|_| ffmpeg::SW_ENCODER.to_string())
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -245,50 +299,54 @@ async fn export_video(
         let started = Instant::now();
 
         if child_slot.lock().unwrap().is_some() {
-            return Err("Es läuft bereits ein Export.".to_string());
+            return Err("An export is already running.".to_string());
         }
         *cancelled.lock().unwrap() = false;
 
         let encodes_video = !request.copy && request.streams != "audio";
-        let mut encoder = t.encoder;
-        let mut result = run_ffmpeg(
-            &ffmpeg_path,
-            &ffmpeg::build_args(&request, encoder)?,
-            clip,
-            &on_progress,
-            &child_slot,
-            &cancelled,
-        );
+        let encoder = ffmpeg::pick_encoder(&t.working, &request.codec, &request.encoder);
+        let run = |enc: &str| {
+            run_ffmpeg(&ffmpeg_path, &ffmpeg::build_args(&request, enc)?, clip, &on_progress, &child_slot, &cancelled)
+        };
+        let mut result = if encodes_video {
+            encode_with_fallback(&encoder, &on_progress, &run)
+        } else {
+            run(&encoder).map(|_| "copy".to_string())
+        };
 
-        // Hardware kann an einzelnen Videos scheitern (10 bit, exotische Auflösung):
-        // dann mit libx264 neu versuchen, wie das Backend
-        if let Err(e) = &result {
-            if e != CANCELLED && encodes_video && ffmpeg::is_hardware(encoder) {
-                eprintln!("[ffmpeg] {encoder} fehlgeschlagen, nutze libx264: {e}");
-                encoder = ffmpeg::SW_ENCODER;
+        // Zielgröße: Hardware-Encoder überschreiten die Bitrate gern. Dann bis zu zweimal mit
+        // passend kleinerer Bitrate nachkodieren, bis die Datei unter dem Limit liegt.
+        if let (Ok(used), Some(max), Some(mut bitrate)) = (&result, request.max_bytes, request.bitrate) {
+            let used = used.clone();
+            for _ in 0..2 {
+                let actual = std::fs::metadata(&request.output).map(|m| m.len()).unwrap_or(0);
+                if !encodes_video || actual <= max {
+                    break;
+                }
+                bitrate = ffmpeg::shrink_bitrate(bitrate, actual, max);
+                eprintln!("[ffmpeg] {actual} > {max} Bytes, neuer Versuch mit {bitrate} kbit/s");
                 let _ = on_progress.send(0.0);
-                result = run_ffmpeg(
-                    &ffmpeg_path,
-                    &ffmpeg::build_args(&request, encoder)?,
-                    clip,
-                    &on_progress,
-                    &child_slot,
-                    &cancelled,
-                );
+                let smaller = ExportRequest { bitrate: Some(bitrate), ..request.clone() };
+                result = ffmpeg::build_args(&smaller, &used)
+                    .and_then(|args| run_ffmpeg(&ffmpeg_path, &args, clip, &on_progress, &child_slot, &cancelled))
+                    .map(|_| used.clone());
+                if result.is_err() {
+                    break;
+                }
             }
         }
 
-        if let Err(e) = result {
-            let _ = std::fs::remove_file(&request.output);
-            return Err(e);
+        match result {
+            Ok(used) => Ok(ExportResult {
+                size: std::fs::metadata(&request.output).map(|m| m.len()).unwrap_or(0),
+                seconds: started.elapsed().as_secs_f64(),
+                encoder: used,
+            }),
+            Err(e) => {
+                let _ = std::fs::remove_file(&request.output);
+                Err(e)
+            }
         }
-
-        let size = std::fs::metadata(&request.output).map(|m| m.len()).unwrap_or(0);
-        Ok(ExportResult {
-            size,
-            seconds: started.elapsed().as_secs_f64(),
-            encoder: if encodes_video { encoder.to_string() } else { "copy".into() },
-        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -297,10 +355,13 @@ async fn export_video(
 /// Editor-Export (Gegenstück zu POST /render im Backend). `overlays` sind PNGs als Base64,
 /// in derselben Reihenfolge wie `overlay_0`, `overlay_1`, … im Projekt.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn render_edit(
     project: edit::EditProject,
     overlays: Vec<String>,
     output: String,
+    codec: Option<String>,
+    encoder: Option<String>,
     on_progress: Channel<f64>,
     running: State<'_, Running>,
 ) -> Result<ExportResult, String> {
@@ -313,21 +374,21 @@ async fn render_edit(
         let ffmpeg_path = t.ffmpeg.clone().ok_or(MISSING_FFMPEG)?;
         let started = Instant::now();
         if child_slot.lock().unwrap().is_some() {
-            return Err("Es läuft bereits ein Export.".to_string());
+            return Err("An export is already running.".to_string());
         }
         *cancelled.lock().unwrap() = false;
 
         // Overlays als Dateien ablegen; der Ordner wird am Ende wieder gelöscht
         let dir = std::env::temp_dir().join(format!("trimly-edit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Temporärer Ordner: {e}"))?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Temporary folder: {e}"))?;
         let mut overlay_files = std::collections::HashMap::new();
         for (i, data) in overlays.iter().enumerate() {
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(data)
-                .map_err(|_| "Ein Overlay ist beschädigt.".to_string())?;
+                .map_err(|_| "An overlay is damaged.".to_string())?;
             let file = dir.join(format!("overlay_{i}.png"));
-            std::fs::write(&file, bytes).map_err(|e| format!("Overlay speichern: {e}"))?;
+            std::fs::write(&file, bytes).map_err(|e| format!("Saving an overlay failed: {e}"))?;
             overlay_files.insert(format!("overlay_{i}"), file.display().to_string());
         }
 
@@ -346,25 +407,22 @@ async fn render_edit(
 
             if project.output == "audio" {
                 let args = edit::build_audio_args(&project, &has_audio, &output)
-                    .ok_or("Das Projekt hat keinen Ton.")?;
+                    .ok_or("This project has no audio.")?;
                 run_ffmpeg(&ffmpeg_path, &args, project.audio_total(), &on_progress, &child_slot, &cancelled)?;
                 return Ok("copy".to_string());
             }
 
             let total = project.total();
-            let run = |encoder: &str| {
-                let args = edit::build_video_args(&project, &overlay_files, source_fps, &has_audio, encoder, &output);
-                run_ffmpeg(&ffmpeg_path, &args, total, &on_progress, &child_slot, &cancelled)
-            };
+            let encoder = ffmpeg::pick_encoder(
+                &t.working,
+                codec.as_deref().unwrap_or("h264"),
+                encoder.as_deref().unwrap_or("auto"),
+            );
             // Filter laufen auf der CPU, kodiert wird mit Hardware, falls vorhanden
-            match run(t.encoder) {
-                Err(e) if e != CANCELLED && ffmpeg::is_hardware(t.encoder) => {
-                    eprintln!("[edit] {} fehlgeschlagen, nutze libx264: {e}", t.encoder);
-                    let _ = on_progress.send(0.0);
-                    run(ffmpeg::SW_ENCODER).map(|_| ffmpeg::SW_ENCODER.to_string())
-                }
-                other => other.map(|_| t.encoder.to_string()),
-            }
+            encode_with_fallback(&encoder, &on_progress, &|enc: &str| {
+                let args = edit::build_video_args(&project, &overlay_files, source_fps, &has_audio, enc, &output);
+                run_ffmpeg(&ffmpeg_path, &args, total, &on_progress, &child_slot, &cancelled)
+            })
         })();
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -392,15 +450,96 @@ fn cancel_export(running: State<'_, Running>) {
     }
 }
 
+// ─── Speichern im Hintergrund ─────────────────────────────────────────────
+// Der Export startet sofort in eine temporäre Datei, während der Speichern-Dialog offen ist.
+// Danach wird sie an den gewählten Ort verschoben (oder verworfen, wenn abgebrochen).
+
+const TEMP_PREFIX: &str = "trimly-export-";
+
+/// Neuer, noch nicht vorhandener Pfad im Temp-Ordner, z. B. …/trimly-export-1234-3.mp4
+#[tauri::command]
+fn temp_output(ext: String) -> String {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let ext: String = ext.chars().filter(|c| c.is_ascii_alphanumeric()).take(5).collect();
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir()
+        .join(format!("{TEMP_PREFIX}{}-{n}.{ext}", std::process::id()))
+        .display()
+        .to_string()
+}
+
+/// Nur eigene Temp-Dateien dürfen verschoben oder gelöscht werden.
+fn is_own_temp(path: &Path) -> bool {
+    path.parent() == Some(std::env::temp_dir().as_path())
+        && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(TEMP_PREFIX))
+}
+
+/// Verschiebt die fertige Temp-Datei an ihr Ziel (über Laufwerksgrenzen hinweg per Kopie).
+#[tauri::command]
+fn finalize_export(from: String, to: String) -> Result<(), String> {
+    let from = PathBuf::from(from);
+    if !is_own_temp(&from) {
+        return Err("Trimly only moves its own temporary exports.".into());
+    }
+    let _ = std::fs::remove_file(&to);
+    if std::fs::rename(&from, &to).is_err() {
+        std::fs::copy(&from, &to).map_err(|e| format!("Saving to {to} failed: {e}"))?;
+        let _ = std::fs::remove_file(&from);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn discard_temp(path: String) {
+    let p = PathBuf::from(path);
+    if is_own_temp(&p) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// Freier Dateiname im Standard-Ordner: „clip_trim.mp4“, sonst „clip_trim (2).mp4“ …
+#[tauri::command]
+fn unique_path(path: String) -> String {
+    let p = PathBuf::from(&path);
+    if !p.exists() {
+        return path;
+    }
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("export").to_string();
+    let ext = p.extension().and_then(|s| s.to_str()).map(|e| format!(".{e}")).unwrap_or_default();
+    (2..10_000)
+        .map(|i| p.with_file_name(format!("{stem} ({i}){ext}")))
+        .find(|c| !c.exists())
+        .unwrap_or_else(|| p.clone())
+        .display()
+        .to_string()
+}
+
+#[tauri::command]
+fn path_exists(path: String) -> bool {
+    Path::new(&path).is_dir()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // Muss das erste Plugin sein: ein zweiter Start (z. B. „Öffnen mit“ unter Windows) gibt
+        // seine Datei an das laufende Fenster weiter, statt ein zweites zu öffnen.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(path) = file_arg(argv.into_iter().skip(1)) {
+                *app.state::<PendingFile>().path.lock().unwrap() = Some(path);
+                let _ = app.emit("open-file", ());
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Running::default())
         .manage(PendingFile::default())
         .setup(|app| {
-            let server = MediaServer::start().map_err(|e| format!("Vorschau-Server: {e}"))?;
+            let server = MediaServer::start().map_err(|e| format!("Preview server: {e}"))?;
             app.manage(server);
             // ffmpeg-Suche und Encoder-Test im Hintergrund vorwärmen
             std::thread::spawn(|| {
@@ -416,21 +555,52 @@ pub fn run() {
             media_url,
             export_video,
             render_edit,
-            cancel_export
+            cancel_export,
+            temp_output,
+            finalize_export,
+            discard_temp,
+            unique_path,
+            path_exists
         ])
         .build(tauri::generate_context!())
-        .expect("Trimly konnte nicht gestartet werden");
+        .expect("Trimly couldn't start");
 
     app.run(|_app, _event| {
         // macOS liefert „Öffnen mit“ als Ereignis, nicht als Startargument. Die Datei wird
         // gemerkt (falls die Oberfläche noch lädt) und die Oberfläche benachrichtigt.
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Opened { urls } = &_event {
-            use tauri::Emitter;
             if let Some(path) = urls.iter().find_map(|u| u.to_file_path().ok()) {
                 *_app.state::<PendingFile>().path.lock().unwrap() = Some(path.display().to_string());
                 let _ = _app.emit("open-file", ());
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temp_outputs_are_unique_and_recognised() {
+        let a = temp_output("mp4".into());
+        let b = temp_output("mp4".into());
+        assert_ne!(a, b);
+        assert!(is_own_temp(Path::new(&a)));
+        assert!(!is_own_temp(Path::new("/home/x/video.mp4")));
+        // nur harmlose Endungen
+        assert!(temp_output("../../x".into()).ends_with(".x"));
+    }
+
+    #[test]
+    fn unique_path_counts_up() {
+        let dir = std::env::temp_dir().join(format!("trimly-unique-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("clip_trim.mp4");
+        assert_eq!(unique_path(p.display().to_string()), p.display().to_string());
+        std::fs::write(&p, b"x").unwrap();
+        assert!(unique_path(p.display().to_string()).ends_with("clip_trim (2).mp4"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

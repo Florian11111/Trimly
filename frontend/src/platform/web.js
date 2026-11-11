@@ -32,15 +32,15 @@ function uploadOriginal(file, onUploadProgress) {
       try {
         result = JSON.parse(xhr.responseText);
       } catch {
-        reject(new Error("Der Server hat nicht wie erwartet geantwortet."));
+        reject(new Error("The server sent an unexpected answer."));
         return;
       }
       if (result.status === "success") resolve(result.originalId);
-      else reject(new Error(`Hochladen fehlgeschlagen: ${result.message}`));
+      else reject(new Error(`Upload failed: ${result.message}`));
     };
     xhr.onerror = () => {
       onUploadProgress?.(null);
-      reject(new Error("Der Server ist nicht erreichbar. Läuft das Backend auf Port 9000?"));
+      reject(new Error("Can't reach the server. Is the backend running on port 9000?"));
     };
     xhr.open("POST", `${API}/store`);
     xhr.send(form);
@@ -97,7 +97,7 @@ export function createWebPlatform() {
 
     open(file, { onUploadProgress } = {}) {
       if (!isVideoFile(file)) {
-        throw new Error("Diese Datei ist kein Video. Wähle eine MP4-, MOV- oder WebM-Datei.");
+        throw new Error("This file isn't a video. Choose an MP4, MOV or WebM file.");
       }
       const src = URL.createObjectURL(file);
       const ref = { file, uploaded: null };
@@ -135,7 +135,7 @@ export function createWebPlatform() {
         originalId = await ref.ensureUploaded(true);
         data = await (await send(originalId)).json();
       }
-      if (data.status !== "success") throw new Error(data.message || "Verarbeitung abgelehnt.");
+      if (data.status !== "success") throw new Error(data.message || "The server refused the export.");
 
       const filename = data.filename;
       // Kein festes Zeitlimit: lange Videos dauern
@@ -153,15 +153,15 @@ export function createWebPlatform() {
           triggerDownload(filename, savedAs);
           return { size: state.size, savedAs };
         }
-        if (state.status === "error") throw new Error(`Verarbeitung fehlgeschlagen: ${state.message}`);
+        if (state.status === "error") throw new Error(`Export failed: ${state.message}`);
         if (state.status === "unknown") {
-          throw new Error("Der Server kennt den Auftrag nicht mehr (neu gestartet?). Bitte nochmal exportieren.");
+          throw new Error("The server lost this export (was it restarted?). Export again.");
         }
       }
     },
 
     async encoderInfo() {
-      return { label: "Verarbeitung auf dem Server", hardware: false };
+      return { label: "Encoding on the server", hardware: false };
     },
   };
 }

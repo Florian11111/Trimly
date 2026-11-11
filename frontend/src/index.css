@@ -1,23 +1,102 @@
 :root {
-  /* Nachtblau mit Glasflächen; Blau-Violett für Aktionen, helles Lavendel für den Schnitt */
+  /* Nachtblau mit Glasflächen; Akzent-Verlauf (--violet → --blue) für Aktionen, helle Akzentfarbe
+     (--trim) für den Schnitt. Theme und Akzent schaltet lib/settings.js über data-Attribute an <html>. */
   --canvas: #08091a;
   --panel: rgba(20, 22, 48, 0.55);
   --raised: rgba(255, 255, 255, 0.07);
   --line: rgba(255, 255, 255, 0.1);
   --text: #eef0ff;
   --muted: #a6a9cc;
+  --danger: #ff8e8e;
+  --success: #8fe0b0;
+  --glass-blur: blur(22px) saturate(140%);
+
+  /* Flächen, die im dunklen Design schwarz getönt sind */
+  --topbar: rgba(8, 9, 26, 0.5);
+  /* Menüs und Dialoge: fast deckend, Glas wirkt in der Kopfzeile nicht doppelt */
+  --popover: rgba(18, 20, 44, 0.97);
+  --well: rgba(0, 0, 0, 0.3);
+  --well-strong: rgba(0, 0, 0, 0.55);
+  --shade: rgba(10, 11, 28, 0.72);
+  --sticky: rgba(8, 9, 26, 0.85);
+  --shadow: rgba(0, 0, 0, 0.9);
+  --backdrop-top: #14153a;
+  --glow-opacity: 1;
+
+  /* Akzent (Standard: Violett) */
   --violet: #8a5cff;
   --blue: #3f7bff;
+  --accent-rgb: 138, 92, 255;
+  --accent-soft: #b59bff;
   --trim: #c9bfff;
+  --trim-rgb: 201, 191, 255;
   --trim-ink: #26215c;
-  --danger: #ff8e8e;
-  --glass-blur: blur(22px) saturate(140%);
+  --warm: #ff7a3d;
 
   --radius-s: 6px;
   --radius-m: 10px;
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 
   color-scheme: dark;
+}
+
+:root[data-accent="blue"] {
+  --violet: #3f8cff;
+  --blue: #22c1e6;
+  --accent-rgb: 63, 140, 255;
+  --accent-soft: #8cc0ff;
+  --trim: #b5dcff;
+  --trim-rgb: 181, 220, 255;
+  --trim-ink: #0c2a4d;
+  --warm: #7a5cff;
+}
+
+:root[data-accent="pink"] {
+  --violet: #e2559f;
+  --blue: #8a5cff;
+  --accent-rgb: 226, 85, 159;
+  --accent-soft: #f3a3cc;
+  --trim: #ffc6e2;
+  --trim-rgb: 255, 198, 226;
+  --trim-ink: #4b1530;
+  --warm: #ff8a5c;
+}
+
+:root[data-accent="green"] {
+  --violet: #1fb98a;
+  --blue: #2f8fff;
+  --accent-rgb: 31, 185, 138;
+  --accent-soft: #84dcbf;
+  --trim: #b8f0dc;
+  --trim-rgb: 184, 240, 220;
+  --trim-ink: #08392b;
+  --warm: #e6c13c;
+}
+
+/* Helles Design: Flächen hell, Schrift dunkel; Klammer kräftiger, damit sie auf Weiß sichtbar bleibt */
+:root[data-theme="light"] {
+  --canvas: #eef0f8;
+  --panel: rgba(255, 255, 255, 0.7);
+  --raised: rgba(24, 26, 70, 0.06);
+  --line: rgba(24, 26, 70, 0.12);
+  --text: #15172e;
+  --muted: #5a5e82;
+  --danger: #c93a3a;
+  --success: #1d8a55;
+  --topbar: rgba(255, 255, 255, 0.6);
+  --popover: rgba(252, 252, 255, 0.98);
+  --well: rgba(24, 26, 70, 0.07);
+  --well-strong: rgba(24, 26, 70, 0.85);
+  --shade: rgba(238, 240, 248, 0.72);
+  --sticky: rgba(240, 242, 250, 0.92);
+  --shadow: rgba(24, 26, 70, 0.35);
+  --backdrop-top: #dfe2f6;
+  --glow-opacity: 0.55;
+  --trim: var(--violet);
+  --trim-rgb: var(--accent-rgb);
+  --trim-ink: #ffffff;
+  --accent-soft: var(--violet);
+  color-scheme: light;
 }
 
 * {
@@ -61,7 +140,8 @@ select {
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
-  background: radial-gradient(100% 70% at 30% 0%, #14153a 0%, var(--canvas) 55%);
+  background: radial-gradient(100% 70% at 30% 0%, var(--backdrop-top) 0%, var(--canvas) 55%);
+  opacity: var(--glow-opacity);
 }
 
 /* Überwiegend dunkel, nur wenige weiche Lichtinseln */
@@ -98,7 +178,7 @@ select {
   left: 34vmax;
   width: 20vmax;
   height: 20vmax;
-  background: #ff7a3d;
+  background: var(--warm);
   opacity: 0.2;
   filter: blur(80px);
   animation: drift-c 46s ease-in-out infinite alternate;

@@ -19,15 +19,15 @@
   height: 48px;
   padding: 0 16px;
   border-bottom: 1px solid var(--line);
-  background: rgba(8, 9, 26, 0.5);
+  background: var(--topbar);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   -webkit-user-select: none;
   user-select: none;
 }
 
-/* Platz für die Ampel-Knöpfe bei der transparenten macOS-Titelleiste */
-.is-desktop .topbar {
+/* Platz für die Ampel-Knöpfe bei der transparenten macOS-Titelleiste (Windows hat eine normale) */
+.is-desktop.is-mac .topbar {
   padding-left: 84px;
 }
 
@@ -88,26 +88,26 @@
 .btn-primary {
   background: linear-gradient(100deg, var(--violet), var(--blue));
   color: #fff;
-  box-shadow: 0 8px 28px -10px rgba(110, 100, 255, 0.85);
+  box-shadow: 0 8px 28px -10px rgba(var(--accent-rgb), 0.85);
   transition: box-shadow 0.2s, filter 0.2s;
 }
 
 .btn-primary:not(:disabled):hover {
   filter: brightness(1.12);
-  box-shadow: 0 10px 34px -8px rgba(110, 100, 255, 0.95);
+  box-shadow: 0 10px 34px -8px rgba(var(--accent-rgb), 0.95);
 }
 
 /* Nach dem Export: Knopf tritt zurück, bis sich etwas ändert */
 .btn-primary.is-done {
   background: var(--raised);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(138, 92, 255, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.45);
 }
 
 .btn-primary.is-done:not(:disabled):hover {
   filter: none;
-  background: rgba(138, 92, 255, 0.18);
-  box-shadow: inset 0 0 0 1px rgba(138, 92, 255, 0.7);
+  background: rgba(var(--accent-rgb), 0.18);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.7);
 }
 
 .btn-quiet {
@@ -145,7 +145,7 @@
   margin-left: auto;
   padding: 3px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--well);
 }
 
 .tabs + .btn {
@@ -166,7 +166,7 @@
 .tab.is-active {
   background: var(--raised);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(138, 92, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.5);
 }
 
 .workspace[hidden],
@@ -208,7 +208,7 @@
 
 .empty h1 span {
   display: block;
-  background: linear-gradient(90deg, #b59bff, #6f9bff);
+  background: linear-gradient(90deg, var(--accent-soft), var(--blue));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -260,7 +260,7 @@
   border: 1px solid var(--line);
   border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 30px 80px -40px rgba(0, 0, 0, 0.9);
+  box-shadow: 0 30px 80px -40px var(--shadow);
 }
 
 .screen video {
@@ -340,7 +340,7 @@ kbd {
 .timeline-track {
   position: relative;
   border-radius: var(--radius-s);
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--well);
   cursor: pointer;
   touch-action: none;
   -webkit-user-select: none;
@@ -365,7 +365,7 @@ kbd {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: rgba(10, 11, 28, 0.72);
+  background: var(--shade);
   pointer-events: none;
 }
 
@@ -408,7 +408,7 @@ kbd {
 .is-grabbing-start .timeline-handle-start,
 .is-grabbing-end .timeline-handle-end {
   filter: brightness(1.15);
-  box-shadow: 0 0 0 3px rgba(201, 191, 255, 0.35), 0 0 18px rgba(201, 191, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(var(--trim-rgb), 0.35), 0 0 18px rgba(var(--trim-rgb), 0.6);
   cursor: grabbing;
 }
 
@@ -489,7 +489,7 @@ kbd {
   gap: 2px;
   padding: 3px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--well);
 }
 
 .segment {
@@ -511,7 +511,7 @@ kbd {
 }
 
 .segment.is-active .output-icon {
-  color: #b59bff;
+  color: var(--accent-soft);
 }
 
 .field-note {
@@ -521,7 +521,7 @@ kbd {
   margin: 0;
   padding: 10px 12px;
   border-radius: var(--radius-s);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--well);
   color: var(--muted);
   font-size: 13px;
 }
@@ -547,7 +547,7 @@ kbd {
 .segment.is-active {
   background: var(--raised);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(138, 92, 255, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.5);
 }
 
 .segment:has(input:disabled) {
@@ -587,7 +587,7 @@ kbd {
 }
 
 .choice.is-active {
-  background: linear-gradient(90deg, rgba(138, 92, 255, 0.22), rgba(63, 123, 255, 0.08));
+  background: linear-gradient(90deg, rgba(var(--accent-rgb), 0.22), rgba(var(--accent-rgb), 0.06));
   box-shadow: inset 3px 0 0 var(--violet);
 }
 
@@ -613,7 +613,7 @@ kbd {
   margin-top: -8px;
   padding: 12px;
   border-radius: var(--radius-s);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--well);
 }
 
 .field-inline {
@@ -631,7 +631,7 @@ kbd {
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-s);
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--well);
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
@@ -658,11 +658,16 @@ input[type="range"] {
 
 .summary-size {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  column-gap: 8px;
   font-size: 22px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
+}
+
+.summary-size span {
+  white-space: nowrap;
 }
 
 .summary-original {
@@ -733,6 +738,287 @@ input[type="range"] {
   margin: 0;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* ─── Qualität: Modus-Umschalter mit kleinem Unterbereich ─────────────── */
+
+.mode-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.mode-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-s);
+  background: var(--well);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mode-warning {
+  color: var(--danger);
+}
+
+.chips {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.chip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 7px 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  text-align: center;
+}
+
+.chip input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.chip:hover {
+  background: var(--raised);
+}
+
+.chip.is-active {
+  border-color: transparent;
+  background: rgba(var(--accent-rgb), 0.2);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.7);
+}
+
+.chip:has(input:focus-visible) {
+  outline: 2px solid var(--trim);
+  outline-offset: 1px;
+}
+
+.chip-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chip-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+fieldset:disabled .chip,
+fieldset:disabled .segment {
+  cursor: default;
+}
+
+.mode-panel .custom {
+  margin-top: 0;
+}
+
+/* Export-Knopf mit kleinem Ordner-Knopf daneben („woanders speichern“) */
+.export-row {
+  display: flex;
+  gap: 8px;
+}
+
+.export-row .export-where {
+  flex: none;
+  width: 40px;
+  height: 40px;
+}
+
+/* ─── Einstellungen (Zahnrad) ──────────────────────────────────────────── */
+
+/* über Arbeitsfläche und Editor, damit das Einstellungsmenü nicht dahinter verschwindet
+   (.app > :not(.backdrop) setzt sonst z-index 1) */
+.app > .topbar {
+  z-index: 5;
+}
+
+.topbar .btn + .settings-toggle {
+  margin-left: 0;
+}
+
+.settings-toggle.is-active {
+  background: var(--raised);
+}
+
+.settings {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 12px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 320px;
+  max-height: calc(100vh - 72px);
+  overflow-y: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--popover);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: 0 24px 60px -24px var(--shadow);
+  cursor: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-group h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.settings-label {
+  font-weight: 550;
+}
+
+.settings-hint,
+.settings-path {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.settings-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings select {
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--well);
+  color: var(--text);
+}
+
+.settings-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-small {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.segmented-small .segment {
+  padding: 5px 4px;
+}
+
+.settings-row > .segmented-small {
+  flex: 1;
+  max-width: 210px;
+}
+
+.swatches {
+  display: flex;
+  gap: 8px;
+}
+
+.swatch {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.swatch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.swatch span {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+
+.swatch.is-active {
+  box-shadow: 0 0 0 2px var(--text);
+}
+
+.swatch:has(input:focus-visible) {
+  outline: 2px solid var(--trim);
+  outline-offset: 2px;
+}
+
+/* ─── Abfrage „Video ersetzen?“ ────────────────────────────────────────── */
+
+/* .app > … gewinnt sonst mit position: relative (siehe .app > :not(.backdrop)) */
+.app > .modal-backdrop,
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.modal {
+  width: min(420px, 100%);
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--popover);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: 0 30px 80px -30px var(--shadow);
+}
+
+.modal h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  word-break: break-all;
+}
+
+.modal p {
+  margin: 0 0 18px;
+  color: var(--muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .encoder.is-hardware::before {

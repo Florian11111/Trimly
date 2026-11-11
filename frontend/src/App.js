@@ -1,27 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import Settings from "./components/Settings";
 import Timeline from "./components/Timeline";
 import Editor from "./editor/Editor";
 import { formatBytes, formatTime } from "./lib/format";
 import {
+  CODECS,
   CUSTOM_HEIGHTS,
-  DEFAULT_CUSTOM,
+  DEFAULT_QUALITY,
+  MODES,
   OUTPUTS,
+  PRESETS,
+  TARGET_SIZES,
   estimateBytes,
-  findPreset,
-  presetsFor,
-  resolveTarget,
+  resolveQuality,
   sourceVideoKbps,
 } from "./lib/presets";
+import { useSettings } from "./lib/settings";
 import { isDesktop, loadPlatform } from "./platform";
 import { API } from "./platform/web";
 
 const FRAME = 1 / 30;
 const MIN_CLIP = 0.01; // Sekunden
+const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
 
 export default function App() {
   const [platform, setPlatform] = useState(null);
   const [encoder, setEncoder] = useState(null);
+  const [settings, updateSettings] = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [video, setVideo] = useState(null); // { name, size, src, ref, dispose }
   const [meta, setMeta] = useState(null); // { duration, width, height }
@@ -30,13 +37,14 @@ export default function App() {
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
 
-  const [presetId, setPresetId] = useState("medium");
-  const [custom, setCustom] = useState(DEFAULT_CUSTOM);
+  const [quality, setQuality] = useState(DEFAULT_QUALITY); // { mode, presetId, custom, sizeMb }
   const [volume, setVolume] = useState(1);
   const [output, setOutput] = useState("both"); // both | video | audio
 
   const [job, setJob] = useState(null); // { state: running|done|error, progress, result, message }
   const [dragging, setDragging] = useState(false);
+  // Datei aus „Öffnen mit“, während schon ein Video offen ist: erst nachfragen
+  const [pendingOpen, setPendingOpen] = useState(null);
   // Editor-Tab (Web: Backend rendert, Desktop: src-tauri/src/edit.rs)
   const [tab, setTab] = useState("trim"); // trim | edit
   const [editorOpened, setEditorOpened] = useState(false);
@@ -46,6 +54,8 @@ export default function App() {
   const inputRef = useRef(null);
   const rangeRef = useRef(range);
   rangeRef.current = range;
+  const videoOpenRef = useRef(false);
+  videoOpenRef.current = !!video;
 
   // ─── Plattform laden ────────────────────────────────────────────────────
 
@@ -57,9 +67,13 @@ export default function App() {
     };
   }, []);
 
+  // Encoder-Anzeige folgt Format und Gerät aus den Einstellungen
   useEffect(() => {
-    platform?.encoderInfo?.().then(setEncoder).catch(() => {});
-  }, [platform]);
+    platform
+      ?.encoderInfo?.({ codec: settings.codec, encoder: settings.encoder })
+      .then(setEncoder)
+      .catch(() => {});
+  }, [platform, settings.codec, settings.encoder]);
 
   const log = useCallback((message) => platform?.log?.(message), [platform]);
 
@@ -76,8 +90,7 @@ export default function App() {
     setRange([0, 0]);
     setCurrent(0);
     setPlaying(false);
-    setPresetId("medium");
-    setCustom(DEFAULT_CUSTOM);
+    setQuality(DEFAULT_QUALITY);
     setVolume(1);
     setOutput("both");
     setJob(null);
@@ -93,7 +106,7 @@ export default function App() {
       try {
         // Erst öffnen, dann altes Video samt Einstellungen in einem Schritt ersetzen
         const next = await platform.open(source, { onUploadProgress: setUpload });
-        log(`geöffnet: ${next.name} ${JSON.stringify(next.ref?.info || {})}`);
+        log(`opened: ${next.name} ${JSON.stringify(next.ref?.info || {})}`);
         resetAll(next);
       } catch (e) {
         setJob({ state: "error", message: e.message });
@@ -110,7 +123,7 @@ export default function App() {
     else if (picked === null && platform.kind === "web") inputRef.current?.click();
   };
 
-  // „Anderes Video“: Auswahl öffnen; erst wenn eine Datei gewählt ist, ersetzt sie
+  // „Open another video“: Auswahl öffnen; erst wenn eine Datei gewählt ist, ersetzt sie
   // das alte Video komplett. Abbrechen lässt alles, wie es war.
   const replaceVideo = () => chooseFile();
 
@@ -121,19 +134,21 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platform]);
 
-  // macOS: „Öffnen mit Trimly“, während die App schon läuft
+  // „Öffnen mit Trimly“, während die App schon läuft: bei offenem Video erst nachfragen
   useEffect(() => {
     if (!platform?.onOpenFile) return undefined;
     let unlisten;
     let alive = true;
-    platform.onOpenFile((path) => openVideo(path)).then((fn) => (alive ? (unlisten = fn) : fn()));
+    platform
+      .onOpenFile((path) => (videoOpenRef.current ? setPendingOpen(path) : openVideo(path)))
+      .then((fn) => (alive ? (unlisten = fn) : fn()));
     return () => {
       alive = false;
       unlisten?.();
     };
   }, [platform, openVideo]);
 
-  // Desktop: Drag & Drop aus dem Finder kommt über Tauri, nicht als DOM-Event
+  // Desktop: Drag & Drop aus dem Explorer/Finder kommt über Tauri, nicht als DOM-Event
   useEffect(() => {
     if (!platform?.onDragDrop) return undefined;
     let unlisten;
@@ -176,7 +191,7 @@ export default function App() {
   const onLoadedMetadata = () => {
     const v = videoRef.current;
     const info = video?.ref?.info;
-    log(`loadedmetadata ${v.videoWidth}x${v.videoHeight} dauer=${v.duration} readyState=${v.readyState}`);
+    log(`loadedmetadata ${v.videoWidth}x${v.videoHeight} duration=${v.duration} readyState=${v.readyState}`);
     const duration = info?.duration || v.duration;
     setMeta({
       duration,
@@ -199,7 +214,7 @@ export default function App() {
     log(`video error code=${err?.code} ${err?.message || ""}`);
     setJob({
       state: "error",
-      message: "Die Vorschau kann dieses Video nicht abspielen. Exportieren funktioniert trotzdem.",
+      message: "The preview can't play this video. Exporting still works.",
     });
   };
 
@@ -251,7 +266,7 @@ export default function App() {
   useEffect(() => {
     if (!meta || tab !== "trim") return undefined;
     const onKey = (e) => {
-      if (e.target.closest?.("input, select, textarea, [role=slider]")) return;
+      if (e.target.closest?.("input, select, textarea, [role=slider], .settings, .modal")) return;
       const v = videoRef.current;
       if (!v) return;
       const step = (s) => seek(Math.min(meta.duration, Math.max(0, v.currentTime + s)));
@@ -309,8 +324,9 @@ export default function App() {
   // ─── Export ─────────────────────────────────────────────────────────────
 
   const desktop = platform?.kind === "desktop";
-  const presets = presetsFor(desktop);
-  const preset = findPreset(presetId);
+  // Die Web-Version kodiert auf dem Server immer H.264
+  const codec = desktop ? settings.codec : "h264";
+  const setQ = (patch) => setQuality((q) => ({ ...q, ...patch }));
 
   const source = useMemo(
     () =>
@@ -327,8 +343,8 @@ export default function App() {
         : null,
     [meta, video]
   );
-  const target = source ? resolveTarget(preset, custom, source) : null;
   const clipLength = Math.max(0, range[1] - range[0]);
+  const target = source ? resolveQuality(quality, source, clipLength, output, codec) : null;
   const estimate = source ? estimateBytes(target, clipLength, source, output) : 0;
   const hasAudio = video?.ref?.info ? video.ref.info.hasAudio : true;
 
@@ -340,23 +356,35 @@ export default function App() {
   // Geänderte Einstellungen machen ein altes Ergebnis ungültig
   useEffect(() => {
     setJob((j) => (j?.state === "done" ? null : j));
-  }, [presetId, custom, volume, range, output]);
+  }, [quality, volume, range, output, settings.codec, settings.encoder]);
 
   // Video ohne Tonspur: nur Video exportieren
   useEffect(() => {
     if (!hasAudio) setOutput("video");
   }, [hasAudio]);
 
-  const runExport = async () => {
+  const runExport = async ({ askLocation = false } = {}) => {
     if (!platform || !video || !target) return;
     setJob({ state: "running", progress: desktop ? 0 : null });
     try {
       const result = await platform.exportVideo(
         video,
-        { start: range[0], end: range[1], volume, target, output },
         {
-          onProgress: (p) =>
-            setJob((j) => (j?.state === "running" ? { ...j, progress: p } : j)),
+          start: range[0],
+          end: range[1],
+          volume,
+          target,
+          output,
+          // Zielgröße hart einhalten (Desktop kodiert nach, wenn der Encoder darüber liegt)
+          maxBytes:
+            quality.mode === "size" && output !== "audio" && Number(quality.sizeMb) > 0
+              ? Math.floor(Number(quality.sizeMb) * 1024 * 1024)
+              : null,
+        },
+        {
+          settings,
+          askLocation,
+          onProgress: (p) => setJob((j) => (j?.state === "running" ? { ...j, progress: p } : j)),
         }
       );
       setJob(result ? { state: "done", result } : null);
@@ -368,13 +396,20 @@ export default function App() {
 
   const cancelExport = () => platform?.cancel?.();
 
+  const pickOutputFolder = async () => {
+    const folder = await platform?.pickFolder?.();
+    if (folder) updateSettings({ outputDir: folder });
+  };
+
   // ─── Darstellung ────────────────────────────────────────────────────────
 
   const running = job?.state === "running";
   const uploading = upload !== null && !desktop;
+  const quietInputs = running || output === "audio";
+  const codecLabel = CODECS.find((c) => c.id === codec)?.label;
 
   return (
-    <div className={`app ${isDesktop ? "is-desktop" : ""}`} {...webDrop}>
+    <div className={`app ${isDesktop ? "is-desktop" : ""} ${IS_MAC ? "is-mac" : ""}`} {...webDrop}>
       <div className="backdrop" aria-hidden="true">
         <span />
         <span />
@@ -392,9 +427,9 @@ export default function App() {
           </span>
         )}
         {video && platform && (
-          <div className="tabs" role="tablist" aria-label="Ansicht">
+          <div className="tabs" role="tablist" aria-label="View">
             {[
-              ["trim", "Schneiden"],
+              ["trim", "Trim"],
               ["edit", "Editor"],
             ].map(([id, label]) => (
               <button
@@ -412,8 +447,27 @@ export default function App() {
         )}
         {video && (
           <button className="btn btn-quiet" onClick={replaceVideo} disabled={running}>
-            Anderes Video
+            Open another video
           </button>
+        )}
+        <button
+          type="button"
+          className={`btn btn-icon btn-quiet settings-toggle ${settingsOpen ? "is-active" : ""}`}
+          aria-label="Settings"
+          aria-expanded={settingsOpen}
+          onClick={() => setSettingsOpen((o) => !o)}
+        >
+          <GearIcon />
+        </button>
+        {settingsOpen && (
+          <Settings
+            settings={settings}
+            update={updateSettings}
+            desktop={desktop}
+            encoders={encoder?.options || []}
+            onPickFolder={pickOutputFolder}
+            onClose={() => setSettingsOpen(false)}
+          />
         )}
       </header>
 
@@ -431,20 +485,20 @@ export default function App() {
           <div className="empty-inner">
             <TrimMark large />
             <h1>
-              Video hierher ziehen
-              <span>schneiden, verkleinern, fertig</span>
+              Drop a video here
+              <span>trim, shrink, done</span>
             </h1>
-            <p>Wähle den Teil, den du brauchst. Trimly macht daraus eine kleinere Datei.</p>
+            <p>Pick the part you need. Trimly turns it into a smaller file.</p>
             <button className="btn btn-primary" onClick={chooseFile} disabled={!platform}>
-              Video auswählen
+              Choose video
             </button>
-            <p className="empty-formats">MP4, MOV, MKV und WebM</p>
+            <p className="empty-formats">MP4, MOV, MKV and WebM</p>
             {job?.state === "error" && <p className="notice notice-error" role="alert">{job.message}</p>}
           </div>
         </main>
       ) : (
         <>
-        {/* Schneiden bleibt beim Tabwechsel erhalten (Marker, Einstellungen) */}
+        {/* Trim bleibt beim Tabwechsel erhalten (Marker, Einstellungen) */}
         <main
           key={video.src}
           className={`workspace ${dragging ? "is-dragging" : ""}`}
@@ -473,7 +527,7 @@ export default function App() {
                 className="btn btn-icon"
                 onClick={togglePlay}
                 disabled={!meta}
-                aria-label={playing ? "Pause" : "Abspielen"}
+                aria-label={playing ? "Pause" : "Play"}
               >
                 {playing ? <PauseIcon /> : <PlayIcon />}
               </button>
@@ -482,16 +536,16 @@ export default function App() {
                 <span className="time-total"> / {formatTime(meta?.duration)}</span>
               </span>
               <span className="marks">
-                <button className="mark" onClick={setIn} disabled={!meta} title="Anfang auf Abspielposition (I)">
-                  <span className="mark-label">Anfang</span>
+                <button className="mark" onClick={setIn} disabled={!meta} title="Set start to playhead (I)">
+                  <span className="mark-label">Start</span>
                   <span className="time">{formatTime(range[0])}</span>
                 </button>
-                <button className="mark" onClick={setOut} disabled={!meta} title="Ende auf Abspielposition (O)">
-                  <span className="mark-label">Ende</span>
+                <button className="mark" onClick={setOut} disabled={!meta} title="Set end to playhead (O)">
+                  <span className="mark-label">End</span>
                   <span className="time">{formatTime(range[1])}</span>
                 </button>
                 <span className="mark mark-static">
-                  <span className="mark-label">Länge</span>
+                  <span className="mark-label">Length</span>
                   <span className="time">{formatTime(clipLength)}</span>
                 </span>
               </span>
@@ -508,70 +562,128 @@ export default function App() {
             />
 
             <p className="hint">
-              Griffe ziehen oder <kbd>I</kbd> und <kbd>O</kbd> drücken, um Anfang und Ende zu setzen.
-              <kbd>Leertaste</kbd> spielt den Ausschnitt ab.
+              Drag the handles or press <kbd>I</kbd> and <kbd>O</kbd> to set start and end.
+              <kbd>Space</kbd> plays the selection.
             </p>
           </section>
 
           <aside className="panel" aria-label="Export">
-            <fieldset className={`field ${output === "audio" ? "is-inactive" : ""}`} disabled={output === "audio"}>
-              <legend>Qualität</legend>
-              <div className="choices">
-                {presets.map((p) => (
-                  <label key={p.id} className={`choice ${presetId === p.id ? "is-active" : ""}`}>
+            <fieldset className={`field ${output === "audio" ? "is-inactive" : ""}`} disabled={quietInputs}>
+              <legend>Quality</legend>
+              <div className="segmented" role="radiogroup" aria-label="Quality mode">
+                {MODES.map((m) => (
+                  <label key={m.id} className={`segment ${quality.mode === m.id ? "is-active" : ""}`} title={m.hint}>
                     <input
                       type="radio"
-                      name="preset"
-                      value={p.id}
-                      checked={presetId === p.id}
-                      onChange={() => setPresetId(p.id)}
-                      disabled={running}
+                      name="mode"
+                      value={m.id}
+                      checked={quality.mode === m.id}
+                      onChange={() => setQ({ mode: m.id })}
                     />
-                    <span className="choice-label">{p.label}</span>
-                    <span className="choice-hint">{p.hint}</span>
+                    <span>{m.label}</span>
                   </label>
                 ))}
               </div>
+
+              <div className="mode-panel">
+                {quality.mode === "original" && (
+                  <p className="mode-note">Cuts without re-encoding. Instant, same quality as the original.</p>
+                )}
+
+                {quality.mode === "compress" && (
+                  <>
+                    <div className="chips" role="radiogroup" aria-label="Compression level">
+                      {PRESETS.map((p) => (
+                        <label key={p.id} className={`chip ${quality.presetId === p.id ? "is-active" : ""}`}>
+                          <input
+                            type="radio"
+                            name="preset"
+                            value={p.id}
+                            checked={quality.presetId === p.id}
+                            onChange={() => setQ({ presetId: p.id })}
+                          />
+                          <span className="chip-label">{p.label}</span>
+                          <span className="chip-hint">{p.id === "custom" ? "Manual" : `${p.height}p`}</span>
+                        </label>
+                      ))}
+                    </div>
+                    {quality.presetId === "custom" && (
+                      <div className="custom">
+                        <label className="field-inline">
+                          <span>Resolution</span>
+                          <select
+                            value={quality.custom.height}
+                            onChange={(e) => setQ({ custom: { ...quality.custom, height: Number(e.target.value) } })}
+                          >
+                            {CUSTOM_HEIGHTS.map((h) => (
+                              <option key={h.value} value={h.value}>{h.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="field-inline">
+                          <span>Frames per second</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="240"
+                            value={quality.custom.fps}
+                            onChange={(e) => setQ({ custom: { ...quality.custom, fps: e.target.value } })}
+                          />
+                        </label>
+                        <label className="field-inline">
+                          <span>Bitrate in kbit/s</span>
+                          <input
+                            type="number"
+                            min="100"
+                            step="100"
+                            value={quality.custom.bitrate}
+                            onChange={(e) => setQ({ custom: { ...quality.custom, bitrate: e.target.value } })}
+                          />
+                        </label>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {quality.mode === "size" && (
+                  <>
+                    <div className="chips" role="radiogroup" aria-label="Target size">
+                      {TARGET_SIZES.map((mb) => (
+                        <label key={mb} className={`chip ${Number(quality.sizeMb) === mb ? "is-active" : ""}`}>
+                          <input
+                            type="radio"
+                            name="size"
+                            value={mb}
+                            checked={Number(quality.sizeMb) === mb}
+                            onChange={() => setQ({ sizeMb: mb })}
+                          />
+                          <span className="chip-label">{mb} MB</span>
+                        </label>
+                      ))}
+                    </div>
+                    <label className="field-inline">
+                      <span>Size in MB</span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={quality.sizeMb}
+                        onChange={(e) => setQ({ sizeMb: e.target.value })}
+                      />
+                    </label>
+                    {target?.tooSmall && output !== "audio" && (
+                      <p className="mode-note mode-warning">
+                        This clip doesn't fit into {quality.sizeMb} MB, even at the lowest quality. Choose a
+                        bigger size or a shorter clip.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             </fieldset>
 
-            {output !== "audio" && presetId === "custom" && (
-              <div className="custom">
-                <label className="field-inline">
-                  <span>Auflösung</span>
-                  <select
-                    value={custom.height}
-                    onChange={(e) => setCustom({ ...custom, height: Number(e.target.value) })}
-                  >
-                    {CUSTOM_HEIGHTS.map((h) => (
-                      <option key={h.value} value={h.value}>{h.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field-inline">
-                  <span>Bilder pro Sekunde</span>
-                  <input
-                    type="number"
-                    min="1"
-                    max="240"
-                    value={custom.fps}
-                    onChange={(e) => setCustom({ ...custom, fps: e.target.value })}
-                  />
-                </label>
-                <label className="field-inline">
-                  <span>Bitrate in kbit/s</span>
-                  <input
-                    type="number"
-                    min="100"
-                    step="100"
-                    value={custom.bitrate}
-                    onChange={(e) => setCustom({ ...custom, bitrate: e.target.value })}
-                  />
-                </label>
-              </div>
-            )}
-
             <fieldset className="field">
-              <legend>Ausgabe</legend>
+              <legend>Output</legend>
               <div className="segmented">
                 {OUTPUTS.map((o) => (
                   <label
@@ -597,13 +709,13 @@ export default function App() {
             {output === "video" ? (
               <p className="field-note">
                 <OutputIcon kind="video" />
-                Das Ergebnis hat keinen Ton.
+                The result has no sound.
               </p>
             ) : (
               <label className="field">
                 <span className="field-row">
-                  <span className="legend">Lautstärke</span>
-                  <span className="value">{volume === 0 ? "Stumm" : `${Math.round(volume * 100)} %`}</span>
+                  <span className="legend">Volume</span>
+                  <span className="value">{volume === 0 ? "Muted" : `${Math.round(volume * 100)} %`}</span>
                 </span>
                 <input
                   type="range"
@@ -613,7 +725,7 @@ export default function App() {
                   value={volume}
                   onChange={(e) => setVolume(Number(e.target.value))}
                   disabled={running}
-                  aria-label="Lautstärke"
+                  aria-label="Volume"
                 />
               </label>
             )}
@@ -623,55 +735,66 @@ export default function App() {
               {output !== "audio" && target && !target.copy && (
                 <p className="summary-line">
                   {target.width} × {target.height}, {Math.round(target.fps)} fps, {target.bitrate} kbit/s
+                  {desktop && `, ${codecLabel}`}
                 </p>
               )}
               {output !== "audio" && target?.capped && (
-                <p className="summary-line">Bitrate auf die des Originals begrenzt</p>
+                <p className="summary-line">Bitrate limited to the original's</p>
               )}
               <p className="summary-size">
-                <span>ca. {formatBytes(estimate)}</span>
-                {video && <span className="summary-original">statt {formatBytes(video.size)}</span>}
+                <span>about {formatBytes(estimate)}</span>
+                {video && <span className="summary-original">instead of {formatBytes(video.size)}</span>}
               </p>
             </div>
 
-            {uploading && (
-              <Progress value={upload} label={`Wird hochgeladen, ${upload} %`} />
-            )}
+            {uploading && <Progress value={upload} label={`Uploading, ${upload} %`} />}
 
             {running ? (
               <div className="running">
                 <Progress
                   value={job.progress === null ? null : Math.round(job.progress * 100)}
                   label={
-                    job.progress === null
-                      ? "Wird verarbeitet"
-                      : `Wird exportiert, ${Math.round(job.progress * 100)} %`
+                    job.progress === null ? "Processing" : `Exporting, ${Math.round(job.progress * 100)} %`
                   }
                 />
                 {platform?.cancel && (
                   <button className="btn btn-quiet btn-block" onClick={cancelExport}>
-                    Abbrechen
+                    Cancel
                   </button>
                 )}
               </div>
             ) : (
-              <button
-                className={`btn btn-primary btn-block ${job?.state === "done" ? "is-done" : ""}`}
-                onClick={runExport}
-                disabled={!meta || clipLength <= 0}
-              >
-                {desktop ? "Exportieren" : "Exportieren und herunterladen"}
-              </button>
+              <div className="export-row">
+                <button
+                  className={`btn btn-primary btn-block ${job?.state === "done" ? "is-done" : ""}`}
+                  onClick={() => runExport()}
+                  disabled={!meta || clipLength <= 0}
+                  title={desktop && settings.outputDir ? `Saves to ${settings.outputDir}` : undefined}
+                >
+                  {desktop ? "Export" : "Export and download"}
+                </button>
+                {desktop && settings.outputDir && (
+                  <button
+                    className="btn btn-icon btn-quiet export-where"
+                    onClick={() => runExport({ askLocation: true })}
+                    disabled={!meta || clipLength <= 0}
+                    aria-label="Export to another folder"
+                    title="Export to another folder"
+                  >
+                    <FolderIcon />
+                  </button>
+                )}
+              </div>
             )}
 
             {job?.state === "done" && (
               <div className="notice notice-done" role="status">
                 <p>
-                  <strong>{job.result.savedAs}</strong> ist fertig, {formatBytes(job.result.size)}.
+                  <strong>{job.result.savedAs}</strong> is ready, {formatBytes(job.result.size)}.
                 </p>
                 {job.result.path && platform?.reveal && (
                   <button className="btn btn-quiet" onClick={() => platform.reveal(job.result.path)}>
-                    Im Finder zeigen
+                    {IS_MAC ? "Show in Finder" : "Show in folder"}
                   </button>
                 )}
               </div>
@@ -691,6 +814,7 @@ export default function App() {
               key={video.src}
               api={API}
               platform={platform}
+              settings={settings}
               active={tab === "edit"}
               mainClip={
                 meta
@@ -698,6 +822,7 @@ export default function App() {
                       url: video.src,
                       name: video.name,
                       duration: meta.duration,
+                      path: desktop ? video.ref.path : null,
                       // Desktop: der Dateipfad ist die „ID“, es wird nichts hochgeladen
                       originalId: desktop ? video.ref.path : originalId,
                     }
@@ -712,9 +837,35 @@ export default function App() {
         )}
         </>
       )}
+
+      {pendingOpen && (
+        <div className="modal-backdrop">
+          <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="replace-title">
+            <h2 id="replace-title">Open {baseName(pendingOpen)}?</h2>
+            <p>This replaces the current video. Your trim, settings and editor changes for it will be lost.</p>
+            <div className="modal-actions">
+              <button className="btn btn-quiet" onClick={() => setPendingOpen(null)} autoFocus>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  const path = pendingOpen;
+                  setPendingOpen(null);
+                  openVideo(path);
+                }}
+              >
+                Open video
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+const baseName = (path) => String(path).slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
 
 function Progress({ value, label }) {
   const indeterminate = value === null || value === undefined;
@@ -779,5 +930,29 @@ const PlayIcon = () => (
 const PauseIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z" fill="currentColor" />
+  </svg>
+);
+
+const GearIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.4z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+const FolderIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2l2 2h8.8A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinejoin="round"
+    />
   </svg>
 );

@@ -9,9 +9,10 @@ import scala.util.Try
 // Positionen relativ zum Ausgabebild (0..1).
 case class EditPreset(width: Int, height: Int, fps: Double, bitrate: Long)
 // Videospur: Abschnitte werden nacheinander abgespielt
-case class EditVideoSeg(originalId: String, start: Double, end: Double)
+// speed: Abspieltempo 0.25–4 (fehlt = 1); auf der Timeline dauert ein Abschnitt (end − start) / speed
+case class EditVideoSeg(originalId: String, start: Double, end: Double, speed: Double = 1.0)
 // Tonspur: Abschnitte liegen frei auf der Timeline (at = Startzeit in der Ausgabe)
-case class EditAudioSeg(originalId: String, start: Double, end: Double, at: Double, volume: Double)
+case class EditAudioSeg(originalId: String, start: Double, end: Double, at: Double, volume: Double, speed: Double = 1.0)
 // Zoom auf den Bereich x,y (oben links) mit Breite w; Höhe ergibt sich aus dem Seitenverhältnis
 case class EditZoom(start: Double, end: Double, x: Double, y: Double, w: Double)
 // Overlay = transparentes PNG in Ausgabegröße (Pfeile, Text, Bilder rendert der Browser)
@@ -27,8 +28,8 @@ case class EditProject(
 
 object EditProject {
   implicit val presetReads: Reads[EditPreset] = Json.reads[EditPreset]
-  implicit val videoReads: Reads[EditVideoSeg] = Json.reads[EditVideoSeg]
-  implicit val audioReads: Reads[EditAudioSeg] = Json.reads[EditAudioSeg]
+  implicit val videoReads: Reads[EditVideoSeg] = Json.using[Json.WithDefaultValues].reads[EditVideoSeg]
+  implicit val audioReads: Reads[EditAudioSeg] = Json.using[Json.WithDefaultValues].reads[EditAudioSeg]
   implicit val zoomReads: Reads[EditZoom] = Json.reads[EditZoom]
   implicit val overlayReads: Reads[EditOverlay] = Json.reads[EditOverlay]
   implicit val projectReads: Reads[EditProject] = Json.using[Json.WithDefaultValues].reads[EditProject]
@@ -43,10 +44,29 @@ object EditRenderer {
   private def num(d: Double): String =
     BigDecimal(d).setScale(4, BigDecimal.RoundingMode.HALF_UP).bigDecimal.stripTrailingZeros.toPlainString
 
+  // Tempo-Grenzen wie im Editor (SPEEDS in project.js)
+  private val MinSpeed = 0.25
+  private val MaxSpeed = 4.0
+
+  // Ton-Tempo als atempo-Kette (je Glied 0.5–2), z. B. 4 → ",atempo=2,atempo=2"; Tempo 1 → leer
+  def atempo(speed: Double): String =
+    if (Math.abs(speed - 1) < 1e-6) ""
+    else {
+      var rest = speed
+      val out = new StringBuilder
+      while (rest > 2 + 1e-9) { out ++= ",atempo=2"; rest /= 2 }
+      while (rest < 0.5 - 1e-9) { out ++= ",atempo=0.5"; rest /= 0.5 }
+      out ++= s",atempo=${num(rest)}"
+      out.toString
+    }
+
   def validate(p: EditProject, overlayFiles: Map[String, String]): Option[String] = {
-    val total = p.video.map(s => s.end - s.start).sum
+    val total = p.video.map(s => (s.end - s.start) / s.speed).sum
+    val badSpeed = (v: Double) => v < MinSpeed || v > MaxSpeed
     if (p.video.isEmpty) Some("Die Videospur ist leer.")
     else if (p.video.exists(s => s.start < 0 || s.end - s.start < 0.005)) Some("Ungültiger Video-Abschnitt.")
+    else if (p.video.exists(s => badSpeed(s.speed)) || p.audio.exists(s => badSpeed(s.speed)))
+      Some("Das Tempo muss zwischen 0,25× und 4× liegen.")
     else if (p.audio.exists(s => s.start < 0 || s.end - s.start < 0.005 || s.at < 0 || s.volume < 0))
       Some("Ungültiger Ton-Abschnitt.")
     else if (p.zooms.exists(z => z.end <= z.start || z.w <= 0 || z.w > 1 || z.x < 0 || z.y < 0 || z.x + z.w > 1.001 || z.y + z.w > 1.001))
@@ -74,7 +94,7 @@ object EditRenderer {
     val H = p.preset.height - p.preset.height % 2
     // Nicht mehr FPS als die schnellste Quelle, sonst nur duplizierte Frames
     val fps = if (sourceFps > 0) Math.min(p.preset.fps, sourceFps) else p.preset.fps
-    val total = p.video.map(s => s.end - s.start).sum
+    val total = p.video.map(s => (s.end - s.start) / s.speed).sum
 
     val inputs = Seq.newBuilder[String]
     val filters = Seq.newBuilder[String]
@@ -84,8 +104,8 @@ object EditRenderer {
     // Videospur: jeder Abschnitt einzeln (schnelles Suchen per -ss vor -i), auf Ausgabegröße bringen, aneinanderhängen
     val videoLabels = p.video.zipWithIndex.map { case (seg, i) =>
       val idx = addInput("-ss", num(seg.start), "-t", num(seg.end - seg.start), "-i", paths(seg.originalId))
-      filters += s"[$idx:v:0]scale=$W:$H:force_original_aspect_ratio=decrease," +
-        s"pad=$W:$H:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${num(fps)},format=yuv420p,setpts=PTS-STARTPTS[v$i]"
+      filters += s"[$idx:v:0]setpts=(PTS-STARTPTS)/${num(seg.speed)},scale=$W:$H:force_original_aspect_ratio=decrease," +
+        s"pad=$W:$H:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${num(fps)},format=yuv420p[v$i]"
       s"[v$i]"
     }
     filters += s"${videoLabels.mkString}concat=n=${videoLabels.size}:v=1:a=0[vcat]"
@@ -140,7 +160,7 @@ object EditRenderer {
     audioAvailable: String => Boolean,
     outPath: String
   ): Option[Seq[String]] = {
-    val total = p.audio.map(s => s.at + s.end - s.start).maxOption.getOrElse(0.0)
+    val total = p.audio.map(s => s.at + (s.end - s.start) / s.speed).maxOption.getOrElse(0.0)
     val inputs = Seq.newBuilder[String]
     val filters = Seq.newBuilder[String]
     var inputIndex = 0
@@ -165,7 +185,7 @@ object EditRenderer {
     val audioLabels = audioSegs.zipWithIndex.map { case (seg, i) =>
       val idx = addInput(Seq("-ss", num(seg.start), "-t", num(seg.end - seg.start), "-i", paths(seg.originalId)))
       val delayMs = Math.round(seg.at * 1000)
-      filters += s"[$idx:a:0]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS," +
+      filters += s"[$idx:a:0]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS${atempo(seg.speed)}," +
         s"volume=${num(seg.volume)},adelay=$delayMs:all=1[a$i]"
       s"[a$i]"
     }

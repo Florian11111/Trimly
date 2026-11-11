@@ -22,7 +22,7 @@ function setup() {
   render(
     <Timeline src="" duration={10} aspect={16 / 9} range={[2, 8]} current={5} onSeek={onSeek} onRangeChange={onRangeChange} />
   );
-  return { onSeek, onRangeChange, start: screen.getByRole("slider", { name: "Anfang" }) };
+  return { onSeek, onRangeChange, start: screen.getByRole("slider", { name: "Start" }) };
 }
 
 beforeEach(() => jest.useFakeTimers());

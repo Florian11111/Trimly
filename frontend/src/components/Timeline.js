@@ -177,7 +177,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
             className="timeline-handle timeline-handle-start"
             role="slider"
             tabIndex={0}
-            aria-label="Anfang"
+            aria-label="Start"
             aria-valuemin={0}
             aria-valuemax={duration}
             aria-valuenow={start}
@@ -189,7 +189,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
             className="timeline-handle timeline-handle-end"
             role="slider"
             tabIndex={0}
-            aria-label="Ende"
+            aria-label="End"
             aria-valuemin={0}
             aria-valuemax={duration}
             aria-valuenow={end}

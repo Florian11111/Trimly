@@ -57,6 +57,28 @@ class EditRendererSpec extends AnyFunSuite {
     overlay.delete(); out.delete()
   }
 
+  test("speed changes the length of video and linked audio") {
+    val out = File.createTempFile("edit_speed", ".mp4")
+    // 4 s in doppeltem Tempo (2 s) + 1 s in halbem Tempo (2 s) = 4 s
+    val project = EditProject(preset,
+      Seq(EditVideoSeg("a", 2, 6, speed = 2), EditVideoSeg("a", 10, 11, speed = 0.5)),
+      Seq(EditAudioSeg("a", 2, 6, at = 0, volume = 1, speed = 2), EditAudioSeg("a", 10, 11, at = 2, volume = 1, speed = 0.5)),
+      Seq.empty, Seq.empty)
+    val result = EditRenderer.render(project, paths, Map.empty, out.getAbsolutePath)
+    assert(result.isRight, result)
+    val duration = probe(out, "-show_entries", "format=duration", "-of", "csv=p=0").toDouble
+    assert(Math.abs(duration - 4.0) < 0.15, s"duration=$duration")
+    out.delete()
+  }
+
+  test("atempo chains steps for speeds outside 0.5 to 2 and rejects extreme speeds") {
+    assert(EditRenderer.atempo(1) == "")
+    assert(EditRenderer.atempo(4) == ",atempo=2,atempo=2")
+    assert(EditRenderer.atempo(0.25) == ",atempo=0.5,atempo=0.5")
+    val tooFast = EditProject(preset, Seq(EditVideoSeg("a", 0, 1, speed = 8)), Seq.empty, Seq.empty, Seq.empty)
+    assert(EditRenderer.validate(tooFast, Map.empty).exists(_.contains("Tempo")))
+  }
+
   test("project without audio segments renders video only") {
     val out = File.createTempFile("edit_noaudio", ".mp4")
     val project = EditProject(preset, Seq(EditVideoSeg("a", 0, 1)), Seq.empty, Seq.empty, Seq.empty)

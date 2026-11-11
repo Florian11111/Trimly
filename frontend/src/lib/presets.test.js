@@ -1,7 +1,16 @@
-import { estimateBytes, findPreset, presetsFor, resolveTarget, sourceVideoKbps } from "./presets";
+import {
+  DEFAULT_QUALITY,
+  estimateBytes,
+  findPreset,
+  resolveQuality,
+  resolveSizeTarget,
+  resolveTarget,
+  sourceVideoKbps,
+} from "./presets";
 
 const landscape = { width: 2560, height: 1440, fps: 60, duration: 20, size: 60_000_000 };
 const portrait = { width: 1080, height: 1920, fps: 30, duration: 10, size: 20_000_000 };
+const MiB = 1024 * 1024;
 
 describe("resolveTarget", () => {
   test("scales down to the preset height and keeps the aspect ratio", () => {
@@ -65,8 +74,59 @@ describe("resolveTarget", () => {
     expect(t).toMatchObject({ bitrate: 2500, capped: false });
   });
 
-  test("copy preset needs no encoding settings", () => {
-    expect(resolveTarget(findPreset("copy"), {}, landscape)).toEqual({ copy: true });
+  test("HEVC and AV1 presets need less bitrate, custom values stay as typed", () => {
+    expect(resolveTarget(findPreset("medium"), {}, landscape, "hevc").bitrate).toBe(1750);
+    expect(resolveTarget(findPreset("medium"), {}, landscape, "av1").bitrate).toBe(1500);
+    const custom = resolveTarget(findPreset("custom"), { height: 720, fps: 30, bitrate: 3000 }, landscape, "av1");
+    expect(custom.bitrate).toBe(3000);
+  });
+});
+
+describe("resolveQuality", () => {
+  test("original mode only cuts", () => {
+    expect(resolveQuality({ ...DEFAULT_QUALITY, mode: "original" }, landscape, 5)).toEqual({ copy: true });
+  });
+
+  test("compress mode uses the chosen preset", () => {
+    expect(resolveQuality(DEFAULT_QUALITY, landscape, 5)).toMatchObject({ height: 720, bitrate: 2500 });
+  });
+});
+
+describe("resolveSizeTarget", () => {
+  test("fits the clip into the target size including audio", () => {
+    const t = resolveSizeTarget(25, 20, landscape);
+    const bytes = estimateBytes(t, 20, landscape);
+    expect(bytes).toBeLessThanOrEqual(25 * MiB);
+    expect(bytes).toBeGreaterThan(22 * MiB);
+    expect(t.tooSmall).toBe(false);
+  });
+
+  test("picks a resolution that suits the bitrate", () => {
+    // 10 MB in 60 s ≈ 1,2 Mbit/s → 480p
+    expect(resolveSizeTarget(10, 60, landscape).height).toBe(480);
+    // 100 MB in 20 s ≈ 39 Mbit/s → volle 1440p mit 60 fps
+    expect(resolveSizeTarget(100, 20, landscape)).toMatchObject({ height: 1440, fps: 60 });
+  });
+
+  test("efficient codecs reach a higher resolution for the same size", () => {
+    const h264 = resolveSizeTarget(10, 30, landscape, "both", "h264").height;
+    const av1 = resolveSizeTarget(10, 30, landscape, "both", "av1").height;
+    expect(av1).toBeGreaterThan(h264);
+  });
+
+  test("video without sound gets the whole budget", () => {
+    expect(resolveSizeTarget(10, 30, landscape, "video").bitrate).toBeGreaterThan(
+      resolveSizeTarget(10, 30, landscape, "both").bitrate
+    );
+  });
+
+  test("flags a size that is too small for the clip", () => {
+    expect(resolveSizeTarget(1, 600, landscape).tooSmall).toBe(true);
+  });
+
+  test("never goes above the source bitrate", () => {
+    const lecture = { width: 1280, height: 720, fps: 25, videoKbps: 300 };
+    expect(resolveSizeTarget(100, 10, lecture)).toMatchObject({ bitrate: 300, capped: true });
   });
 });
 
@@ -90,10 +150,6 @@ describe("estimateBytes", () => {
   test("is zero for an empty clip", () => {
     expect(estimateBytes({ copy: false, bitrate: 2500 }, 0, landscape)).toBe(0);
   });
-});
-
-test("both platforms offer the original (copy) preset", () => {
-  expect(presetsFor().map((p) => p.id)).toContain("copy");
 });
 
 test("unknown preset ids fall back to medium", () => {

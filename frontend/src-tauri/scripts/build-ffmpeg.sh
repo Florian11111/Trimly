@@ -42,17 +42,18 @@ PARSERS="h264,hevc,aac,aac_latm,mpegaudio,mpeg4video,mpegvideo,vp8,vp9,av1,opus,
 BSFS="h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,extract_extradata,vp9_superframe,av1_frame_split,null"
 # Zweite Zeile: Editor (src/edit.rs)
 FILTERS="scale,fps,volume,aresample,aformat,format,null,anull,setpts,asetpts,trim,atrim,color,anullsrc,copy,acopy,\
-pad,setsar,concat,zoompan,overlay,adelay,amix"
+pad,setsar,concat,zoompan,overlay,adelay,amix,atempo"
 
 EXTRA=()
 if [ "$OS" = windows ]; then
-  ENCODERS="$ENCODERS,h264_nvenc,h264_qsv,h264_amf"
+  # H.264, HEVC und AV1 je Hersteller; ob die Karte es kann, prüft Trimly per Test-Encode
+  ENCODERS="$ENCODERS,h264_nvenc,h264_qsv,h264_amf,hevc_nvenc,hevc_qsv,hevc_amf,av1_nvenc,av1_qsv,av1_amf"
   EXTRA+=(--enable-ffnvcodec --enable-nvenc --enable-cuda --enable-libvpl --enable-amf --enable-d3d11va --enable-dxva2
           --extra-ldflags=-static --pkg-config-flags=--static
           # Statisch fehlen sonst Abhängigkeiten: libvpl ist C++, MSYS2-lame nutzt mpg123
           "--extra-libs=-lstdc++ -lmpg123 -lshlwapi")
 else
-  ENCODERS="$ENCODERS,h264_videotoolbox"
+  ENCODERS="$ENCODERS,h264_videotoolbox,hevc_videotoolbox"
   EXTRA+=(--enable-videotoolbox --enable-audiotoolbox)
 fi
 

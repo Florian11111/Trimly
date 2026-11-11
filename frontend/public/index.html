@@ -1,13 +1,22 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
+    <script>
+      // Theme vor dem ersten Bild setzen, damit beim Start nichts hell/dunkel aufblitzt (siehe lib/settings.js)
+      try {
+        var s = JSON.parse(localStorage.getItem("trimly.settings") || "{}");
+        var light = s.theme === "light" || (s.theme === "system" && matchMedia("(prefers-color-scheme: light)").matches);
+        document.documentElement.dataset.theme = light ? "light" : "dark";
+        document.documentElement.dataset.accent = s.accent || "violet";
+      } catch (e) {}
+    </script>
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#08091a" />
     <meta
       name="description"
-      content="Videos schneiden und verkleinern"
+      content="Trim and shrink videos"
     />
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <!--

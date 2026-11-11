@@ -2,8 +2,9 @@
 //
 // project = {
 //   clips:     { [clipId]: { url, name, duration } },   // Server-IDs separat (nicht im Undo-Verlauf)
-//   videoSegs: [{ id, clipId, srcStart, srcEnd, volume }]          // laufen nacheinander
-//   audioSegs: null | [{ id, clipId, srcStart, srcEnd, tlStart, volume }]  // null = mit Video verbunden
+//   videoSegs: [{ id, clipId, srcStart, srcEnd, volume, speed }]          // laufen nacheinander
+//   audioSegs: null | [{ id, clipId, srcStart, srcEnd, tlStart, volume, speed }]  // null = mit Video verbunden
+// speed: Abspieltempo (fehlt = 1). Auf der Timeline dauert ein Abschnitt (srcEnd − srcStart) / speed.
 //   overlays:  [{ id, type: "arrow"|"text"|"image", start, end, ... }]
 //   zooms:     [{ id, start, end, x, y, w }]
 // }
@@ -16,11 +17,17 @@ export const newId = (prefix) => `${prefix}${Date.now().toString(36)}_${nextId++
 
 export const emptyProject = () => ({ clips: {}, videoSegs: [], audioSegs: null, overlays: [], zooms: [] });
 
+// Wählbares Tempo; ffmpeg rendert es mit setpts (Bild) und atempo (Ton, Tonhöhe bleibt)
+export const SPEEDS = [0.25, 0.5, 1, 1.5, 2, 4];
+export const speedOf = (s) => (s.speed > 0 ? s.speed : 1);
+// Dauer eines Abschnitts auf der Timeline
+export const segLen = (s) => (s.srcEnd - s.srcStart) / speedOf(s);
+
 // Videoabschnitte mit Position auf der Timeline
 export function layoutVideo(videoSegs) {
   let t = 0;
   return videoSegs.map(s => {
-    const len = s.srcEnd - s.srcStart;
+    const len = segLen(s);
     const item = { ...s, tlStart: t, len };
     t += len;
     return item;
@@ -28,13 +35,14 @@ export function layoutVideo(videoSegs) {
 }
 
 export const totalDuration = (project) =>
-  project.videoSegs.reduce((sum, s) => sum + (s.srcEnd - s.srcStart), 0);
+  project.videoSegs.reduce((sum, s) => sum + segLen(s), 0);
 
 // Tonspur, wie sie abgespielt/exportiert wird: verbunden = folgt der Videospur
 export function effectiveAudio(project) {
   if (project.audioSegs) return project.audioSegs;
   return layoutVideo(project.videoSegs).map(s => ({
     id: s.id, clipId: s.clipId, srcStart: s.srcStart, srcEnd: s.srcEnd, tlStart: s.tlStart, volume: s.volume,
+    speed: speedOf(s),
   }));
 }
 
@@ -59,7 +67,7 @@ export function splitVideoAt(project, t) {
   const i = layout.findIndex(s => t > s.tlStart + MIN_LEN && t < s.tlStart + s.len - MIN_LEN);
   if (i < 0) return project;
   const s = project.videoSegs[i];
-  const cut = s.srcStart + (t - layout[i].tlStart);
+  const cut = s.srcStart + (t - layout[i].tlStart) * speedOf(s);
   const a = { ...s, srcEnd: cut };
   const b = { ...s, id: newId("v"), srcStart: cut };
   const videoSegs = [...project.videoSegs];
@@ -73,9 +81,9 @@ export function splitAudioAt(project, segId, t) {
   const i = project.audioSegs.findIndex(s => s.id === segId);
   if (i < 0) return project;
   const s = project.audioSegs[i];
-  const len = s.srcEnd - s.srcStart;
+  const len = segLen(s);
   if (t <= s.tlStart + MIN_LEN || t >= s.tlStart + len - MIN_LEN) return project;
-  const cut = s.srcStart + (t - s.tlStart);
+  const cut = s.srcStart + (t - s.tlStart) * speedOf(s);
   const audioSegs = [...project.audioSegs];
   audioSegs.splice(i, 1, { ...s, srcEnd: cut }, { ...s, id: newId("a"), srcStart: cut, tlStart: t });
   return { ...project, audioSegs };
@@ -120,20 +128,22 @@ export function updateItem(project, kind, id, patch) {
 // Ziehen auf der Timeline: neue Werte aus dem Zustand bei Drag-Beginn (orig) + Verschiebung dt
 export function dragPatch(kind, mode, orig, dt, ctx) {
   const clampv = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  // dt ist Timeline-Zeit; im Clip entspricht das dt × Tempo
+  const sp = speedOf(orig);
   if (kind === "video") {
     const dur = ctx.clipDuration;
-    if (mode === "start") return { srcStart: clampv(orig.srcStart + dt, 0, orig.srcEnd - MIN_LEN) };
-    if (mode === "end") return { srcEnd: clampv(orig.srcEnd + dt, orig.srcStart + MIN_LEN, dur) };
+    if (mode === "start") return { srcStart: clampv(orig.srcStart + dt * sp, 0, orig.srcEnd - MIN_LEN) };
+    if (mode === "end") return { srcEnd: clampv(orig.srcEnd + dt * sp, orig.srcStart + MIN_LEN, dur) };
     return null;
   }
   if (kind === "audio") {
     const dur = ctx.clipDuration;
     if (mode === "move") return { tlStart: Math.max(0, orig.tlStart + dt) };
     if (mode === "start") {
-      const d = clampv(dt, Math.max(-orig.srcStart, -orig.tlStart), orig.srcEnd - orig.srcStart - MIN_LEN);
-      return { srcStart: orig.srcStart + d, tlStart: orig.tlStart + d };
+      const d = clampv(dt, Math.max(-orig.srcStart / sp, -orig.tlStart), segLen(orig) - MIN_LEN);
+      return { srcStart: orig.srcStart + d * sp, tlStart: orig.tlStart + d };
     }
-    if (mode === "end") return { srcEnd: clampv(orig.srcEnd + dt, orig.srcStart + MIN_LEN, dur) };
+    if (mode === "end") return { srcEnd: clampv(orig.srcEnd + dt * sp, orig.srcStart + MIN_LEN, dur) };
     return null;
   }
   // Overlay / Zoom: Zeitbereich innerhalb des Projekts
@@ -157,10 +167,10 @@ export function buildRenderProject(project, preset, originalIds, output = "both"
   const overlays = project.overlays.filter(inRange);
   const body = {
     preset: { width: preset.width, height: preset.height, fps: preset.fps, bitrate: preset.bitrate },
-    video: project.videoSegs.map(s => ({ originalId: originalId(s.clipId), start: s.srcStart, end: s.srcEnd })),
+    video: project.videoSegs.map(s => ({ originalId: originalId(s.clipId), start: s.srcStart, end: s.srcEnd, speed: speedOf(s) })),
     audio: effectiveAudio(project)
       .filter(s => output === "audio" || s.tlStart < total)
-      .map(s => ({ originalId: originalId(s.clipId), start: s.srcStart, end: s.srcEnd, at: s.tlStart, volume: s.volume })),
+      .map(s => ({ originalId: originalId(s.clipId), start: s.srcStart, end: s.srcEnd, at: s.tlStart, volume: s.volume, speed: speedOf(s) })),
     zooms: project.zooms.filter(inRange).map(({ start, end, x, y, w }) => ({ start, end: Math.min(end, total), x, y, w })),
     overlays: overlays.map((o, i) => ({ file: `overlay_${i}`, start: o.start, end: Math.min(o.end, total) })),
     output,
@@ -170,5 +180,5 @@ export function buildRenderProject(project, preset, originalIds, output = "both"
 
 // Länge der Tonspur (Ende des letzten Ton-Abschnitts)
 export function audioDuration(project) {
-  return Math.max(0, ...effectiveAudio(project).map(s => s.tlStart + s.srcEnd - s.srcStart));
+  return Math.max(0, ...effectiveAudio(project).map(s => s.tlStart + segLen(s)));
 }

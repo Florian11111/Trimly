@@ -16,12 +16,18 @@
   display: flex;
   gap: 12px;
   align-items: flex-start;
+  justify-content: center;
 }
 
 .ed-frame {
   position: relative;
   flex: 1;
   min-width: 0;
+  /* Bild bleibt 16:9, darf aber nur so hoch werden, dass Steuerung, Timeline und Export
+     (zusammen gut 400 px plus Kopfzeile) noch ins Fenster passen – sonst rutschen sie
+     im maximierten Fenster unter den Rand. Breite statt Höhe begrenzen, damit die
+     Overlay-Koordinaten (relativ zum 16:9-Rahmen) stimmen. */
+  max-width: max(320px, calc((100vh - 440px) * 16 / 9));
   background: rgba(0, 0, 0, 0.55);
   border-radius: 8px;
   overflow: hidden;
@@ -136,9 +142,23 @@
   padding: 5px 8px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--well);
   color: var(--text);
   font-size: 0.9rem;
+}
+
+.ed-btn-small {
+  padding: 3px 7px;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ed-speed {
+  gap: 4px;
+}
+
+.ed-speed > span {
+  width: 100%;
 }
 
 .ed-btn:hover:not(:disabled) {
@@ -146,7 +166,7 @@
 }
 
 .ed-btn:disabled {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--raised);
   color: var(--text);
   opacity: 0.5;
   cursor: not-allowed;
@@ -164,7 +184,7 @@
 
 .ed-btn.export {
   background: linear-gradient(100deg, var(--violet), var(--blue));
-  box-shadow: 0 8px 28px -10px rgba(110, 100, 255, 0.85);
+  box-shadow: 0 8px 28px -10px rgba(var(--accent-rgb), 0.85);
   color: #fff;
   font-weight: 600;
   margin-left: auto;
@@ -172,11 +192,11 @@
 
 .ed-upload {
   font-size: 0.85rem;
-  color: #9db6ff;
+  color: var(--accent-soft);
 }
 
 .ed-message {
-  color: #8fe0b0;
+  color: var(--success);
   font-size: 0.9rem;
   margin: 0;
 }
@@ -189,7 +209,7 @@
 
 .ed-timeline {
   overflow-x: auto;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--well);
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--text);
@@ -213,7 +233,7 @@
   height: 22px;
   min-height: 22px;
   cursor: pointer;
-  background: rgba(8, 9, 26, 0.85);
+  background: var(--sticky);
 }
 
 .tl-row-label {
@@ -226,7 +246,7 @@
   padding: 0 8px;
   display: flex;
   align-items: center;
-  background: rgba(8, 9, 26, 0.85);
+  background: var(--sticky);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -248,6 +268,7 @@
 
 .tl-item {
   position: absolute;
+  color: #fff; /* farbige Spuren, auch im hellen Design weiße Schrift */
   height: 24px;
   border-radius: 4px;
   box-sizing: border-box;
