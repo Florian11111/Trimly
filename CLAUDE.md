@@ -2,7 +2,7 @@
 
 Videos schneiden und verkleinern. Eine React-Oberfläche, zwei Betriebsarten:
 
-- **Desktop (Tauri 2, macOS + Windows):** Rust ruft ffmpeg direkt auf der lokalen Datei auf, mit Hardware-Encoding (VideoToolbox, NVENC, Quick Sync, AMF).
+- **Desktop (Tauri 2, macOS + Windows + Linux):** Rust ruft ffmpeg direkt auf der lokalen Datei auf, mit Hardware-Encoding (VideoToolbox, NVENC, Quick Sync, AMF, unter Linux VA-API).
 - **Web:** Upload an ein Scala/Play-Backend, das ffmpeg im Docker-Container ausführt (optional NVENC über `docker-compose.gpu.yml`, Windows-Start per `start-trimly.bat`).
 
 Florian nutzt beides: Mac (M5) und Windows-PC mit AMD Radeon RX 9070 XT (AMF, kein NVENC).
@@ -30,7 +30,7 @@ Florian nutzt beides: Mac (M5) und Windows-PC mit AMD Radeon RX 9070 XT (AMF, ke
 - „Anderes Video“ ruft `resetAll()` auf (alles inkl. Einstellungen zurück). Der Arbeitsbereich hat `key={video.src}`, damit Player und Filmstreifen pro Video neu entstehen.
 - Nach einem Export tritt der Export-Knopf zurück (`.btn-primary.is-done`), bis sich eine Einstellung ändert.
 - `web.js` folgt dem Backend-Protokoll: `mode=original|custom`, `output=both|video|audio`, bei `status: "missing"` Original neu hochladen und erneut senden, `/check` liefert `status` ready/computing/error/unknown, Download per Direktlink mit `?name=` (kein RAM-Puffer).
-- `src/editor/` (Editor-Tab: Clips, Tonspur, Overlays, Zoom, `POST /render`) stammt aus dem Oktober-Stand. Er hängt über den Umschalter „Schneiden / Editor“ in der Kopfzeile an `App.js`, im Web und auf dem Desktop. Auf dem Desktop ist die „originalId“ der Dateipfad (kein Upload, kein Keepalive), Clips kommen über `platform.pick/open`, Export über `platform.renderEdit` → Rust `render_edit` (Overlays als Base64-PNG). Beide Ansichten bleiben beim Umschalten erhalten (`hidden`). Farben in `Editor.css` nutzen die Design-Tokens. `src/presets.js` gehört nur zum Editor.
+- `src/editor/` (Editor-Tab: Clips, Tonspur, Overlays, Zoom, `POST /render`) stammt aus dem Oktober-Stand. Er hängt über den Umschalter „Schneiden / Editor“ in der Kopfzeile an `App.js`, im Web und auf dem Desktop. Auf dem Desktop ist die „originalId“ der Dateipfad (kein Upload, kein Keepalive), Clips kommen über `platform.pick/open`, Export über `platform.renderEdit` → Rust `render_edit` (Overlays als Base64-PNG). Beide Ansichten bleiben beim Umschalten erhalten (`hidden`). Der Editor ist ein eigenes Bundle (`React.lazy`), vorgeladen beim Zeigen auf oder Fokussieren des Tabs; Tests brauchen dafür `findBy…`. Farben in `Editor.css` nutzen die Design-Tokens. `src/presets.js` gehört nur zum Editor.
 
 ### Desktop (`frontend/src-tauri/src/`)
 
@@ -42,6 +42,7 @@ Florian nutzt beides: Mac (M5) und Windows-PC mit AMD Radeon RX 9070 XT (AMF, ke
 - „Öffnen mit“: `bundle.fileAssociations` (Rolle Viewer, Rang `Alternate` → nie Standardprogramm). Windows übergibt die Datei als Startargument, macOS als `RunEvent::Opened` → wird in `PendingFile` gemerkt und als Event `open-file` gemeldet; die UI holt sie per `initial_file` ab (liefert jede Datei nur einmal). Testen auf dem Mac: `open --stderr log.txt -a …/Trimly.app video.mp4`. Eine Instanz: `tauri-plugin-single-instance` (muss das erste Plugin sein) gibt die Datei eines zweiten Starts per `PendingFile` + `open-file` an das laufende Fenster weiter (unter Windows getestet). Achtung beim Testen: zwei Builds mit derselben `identifier` teilen sich das.
 - Fehlersuche ohne Bildschirmzugriff: `cargo build && ./target/debug/trimly /pfad/video.mp4 2>&1 | grep '\[ui\]'` (Debug-Build lädt die UI von `localhost:3000`).
 - `tauri.conf.json`: macOS-Titelleiste als Overlay (`.is-desktop.is-mac .topbar` lässt 84 px für die Ampel-Knöpfe frei; Windows hat eine normale Titelleiste).
+- **Linux (November 2026 in einer UTM-VM getestet: Ubuntu 24.04 ARM64, libx264; VA-API auf echter Hardware noch ungetestet):** Builds als `.deb`, `.rpm` und AppImage (Release-Workflow, ubuntu-22.04 x64 + ARM64). ffmpeg kommt vom System (`.deb` hängt von `ffmpeg` ab). Vorschau braucht unter WebKitGTK die GStreamer-Plugins good/bad/libav, sonst bleibt das Bild schwarz; AppImage liefert sie per `bundleMediaFramework` mit. Hardware: Familie `vaapi` (Intel/AMD) – braucht `-vaapi_device` vor den Eingaben (`hw_init_args`), den Filter `format=nv12,hwupload` am Ende (`final_format_filter`) und **kein** `-pix_fmt` (`pix_fmt_args`); Gerät per `TRIMLY_VAAPI_DEVICE` (Standard `/dev/dri/renderD128`). NVENC und QSV gehen unter Linux wie gehabt. „Öffnen mit“: eigene Desktop-Vorlage `linux/trimly.desktop` mit `Exec=… %F` (Tauris Standard übergibt keine Datei), MIME-Typen aus `fileAssociations`; die Datei kommt als Startargument wie unter Windows. In einer UTM-VM auf dem Mac gibt es keine GPU, dort läuft nur libx264.
 
 ### Backend (`backend/app/video/`)
 
@@ -84,15 +85,17 @@ README-Screenshots in `docs/images/` stammen von Playwright/WebKit gegen `docker
 
 ### Release
 
-`.github/workflows/release.yml` baut bei jedem Tag `v*` die Desktop-App für Windows (`windows-latest`, mit mitgeliefertem ffmpeg, gecacht über den Hash von `build-ffmpeg.sh`) und macOS (`macos-latest`, Apple Silicon, ohne ffmpeg, nur ad-hoc signiert) und lädt die Installer in einen **Entwurfs-Release**. Der Release-Text (unsigniert, SmartScreen/Gatekeeper, GPL-Hinweis mit ffmpeg-Version) steht im Job `create-release`.
+`.github/workflows/release.yml` baut bei jedem Tag `v*` die Desktop-App für Windows (`windows-latest`, mit mitgeliefertem ffmpeg, gecacht über den Hash von `build-ffmpeg.sh`), macOS (`macos-latest`, Apple Silicon, ohne ffmpeg, nur ad-hoc signiert) und Linux (`ubuntu-22.04` und `ubuntu-22.04-arm`, `.deb`/`.rpm`/AppImage, ohne ffmpeg) und lädt die Installer in einen Entwurfs-Release. Sind alle Builds grün, **veröffentlicht der Job `publish` ihn automatisch** (Tags mit Bindestrich wie `v0.3.0-beta.1` als Vorabversion). Der Release-Text (unsigniert, SmartScreen/Gatekeeper, GPL-Hinweis mit ffmpeg-Version) steht im Job `create-release`, der auch prüft, dass Tag, `package.json` und `Cargo.toml` dieselbe Version haben.
 
-1. Version in allen drei Dateien gleich erhöhen: `frontend/package.json`, `frontend/src-tauri/tauri.conf.json`, `frontend/src-tauri/Cargo.toml` (danach `cargo check` in `src-tauri`, damit `Cargo.lock` mitzieht).
-2. Committen und pushen, dann Tag setzen und pushen:
+1. Version erhöhen in `frontend/package.json` und `frontend/src-tauri/Cargo.toml` (danach `cargo check` in `src-tauri`, damit `Cargo.lock` mitzieht). `tauri.conf.json` liest die Version aus `package.json` (`"version": "../package.json"`).
+2. Auf master committen und pushen, dann Tag setzen und pushen:
    ```bash
    git tag v0.2.0 && git push origin v0.2.0
    ```
-3. Unter GitHub → Actions den Lauf abwarten (erster Windows-Lauf baut ffmpeg, dauert deutlich länger), dann unter Releases den Entwurf prüfen: `.exe`/`.msi` und `.dmg` vorhanden, Text passt, Installer kurz testen.
-4. Entwurf veröffentlichen. Schlug ein Lauf fehl: Entwurf löschen, Tag löschen (`git push --delete origin v0.2.0 && git tag -d v0.2.0`), Fehler beheben, neu taggen.
+3. Unter GitHub → Actions den Lauf abwarten (erster Windows-Lauf baut ffmpeg, dauert deutlich länger). Danach ist der Release öffentlich.
+4. Schlug ein Lauf fehl, bleibt es beim Entwurf: Entwurf löschen, Tag löschen (`git push --delete origin v0.2.0 && git tag -d v0.2.0`), Fehler beheben, neu taggen.
+
+Lizenz: GPL-3.0-or-later (`LICENSE`), passend zum mitgelieferten libx264-ffmpeg. `frontend/.env.production` (im Git, Ausnahme in `.gitignore`) schaltet Source-Maps im Build ab.
 
 ## Bekannte Baustellen
 

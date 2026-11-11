@@ -24,7 +24,7 @@ No account, no subscription, no upload. Just speed.
 - **Original**: cut without re-encoding, done in a second
 - **Compress**: Small, Medium, High or custom
 - **Exact size before saving**: calculate first, then export instantly
-- **Hardware encoding**: NVIDIA, AMD, Intel, Apple · H.264, HEVC, AV1
+- **Hardware encoding**: NVIDIA, AMD, Intel, Apple, VA-API on Linux · H.264, HEVC, AV1
 - **Right-click → Open with → Trimly**
 
 ## Download
@@ -33,6 +33,7 @@ No account, no subscription, no upload. Just speed.
 |---|---|---|
 | Windows 10/11 (x64) | `Trimly_x.y.z_x64-setup.exe` | ffmpeg is included |
 | macOS 11+ (Apple Silicon) | `Trimly_x.y.z_aarch64.dmg` | needs ffmpeg: `brew install ffmpeg` |
+| Linux (x64, ARM64) | `.deb`, `.rpm` or `.AppImage` | needs ffmpeg from your package manager (the `.deb` installs it) |
 
 All files are on the [releases page](https://github.com/Florian11111/Trimly/releases).
 The builds aren't code-signed yet. Windows shows a SmartScreen warning (*More info → Run anyway*),
@@ -96,8 +97,7 @@ with libx264. The line under the export button shows which encoder is active.
 ### Editor
 
 The *Editor* tab combines several clips, lets you detach and move the audio, changes speed, crops,
-and adds arrows, text, images and zooms. It has its own color theme, so you always see which mode
-you're in.
+and adds arrows, text, images and zooms.
 
 <img src="docs/images/editor.jpg" alt="The editor with a text overlay and a zoom" width="80%">
 
@@ -186,6 +186,23 @@ cd frontend && npm ci && npm run desktop:build
 The `.app` and `.dmg` are in `frontend/src-tauri/target/release/bundle/`.
 </details>
 
+<details>
+<summary><b>Linux</b> (Debian/Ubuntu)</summary>
+
+```bash
+sudo apt install build-essential curl file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+  libayatana-appindicator3-dev librsvg2-dev ffmpeg nodejs npm \
+  gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+cd frontend && npm ci && npm run desktop:build
+```
+
+If Node.js is already installed (e.g. from NodeSource), leave out `nodejs npm`, otherwise apt
+reports a conflict. The GStreamer plugins are needed for the video preview. The `.deb`, `.rpm` and `.AppImage` are in
+`frontend/src-tauri/target/release/bundle/`. On Intel and AMD GPUs Trimly encodes with VA-API;
+`TRIMLY_VAAPI_DEVICE` picks another card than `/dev/dri/renderD128`.
+</details>
+
 `npm run desktop` starts the app with hot reload. `TRIMLY_ENCODER=cpu` forces software encoding.
 
 ### Tests
@@ -212,7 +229,8 @@ the small layer in `frontend/src/platform/`.
 
 ## License
 
-<!-- LICENSE-Datei fehlt noch. Mit mitgeliefertem libx264-ffmpeg ist GPL-3.0 die einfachste Wahl. -->
+Trimly is licensed under the [GNU General Public License v3.0 or later](LICENSE).
+
 The Windows build ships ffmpeg compiled with libx264 (GPL); its source is at
 [ffmpeg.org](https://ffmpeg.org/releases/), the build script is in
 `frontend/src-tauri/scripts/build-ffmpeg.sh`.

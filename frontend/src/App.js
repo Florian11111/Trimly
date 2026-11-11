@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import Settings from "./components/Settings";
 import Timeline from "./components/Timeline";
-import Editor from "./editor/Editor";
 import { formatBytes, formatTime } from "./lib/format";
 import {
   CODECS,
@@ -20,6 +19,11 @@ import { useSettings } from "./lib/settings";
 import { useUndo } from "./lib/useUndo";
 import { isDesktop, loadPlatform } from "./platform";
 import { API } from "./platform/web";
+
+// Editor als eigenes Bundle: wird erst geladen, wenn man in die Nähe des Tabs kommt,
+// damit der Start (Trim-Ansicht) schlank bleibt
+const loadEditor = () => import("./editor/Editor");
+const Editor = lazy(loadEditor);
 
 const FRAME = 1 / 30;
 const MIN_CLIP = 0.01; // Sekunden
@@ -598,6 +602,9 @@ export default function App() {
                 aria-selected={tab === id}
                 className={`tab ${tab === id ? "is-active" : ""}`}
                 onClick={() => switchTab(id)}
+                // vorab laden, damit der Wechsel ohne Wartezeit klappt
+                onPointerEnter={id === "edit" ? loadEditor : undefined}
+                onFocus={id === "edit" ? loadEditor : undefined}
               >
                 {label}
               </button>
@@ -1047,6 +1054,7 @@ export default function App() {
         </main>
         {editorOpened && (
           <main className="editor-host" hidden={tab !== "edit"}>
+            <Suspense fallback={null}>
             <Editor
               key={video.src}
               api={API}
@@ -1070,6 +1078,7 @@ export default function App() {
               }
               formatFileSize={formatBytes}
             />
+            </Suspense>
           </main>
         )}
         </>

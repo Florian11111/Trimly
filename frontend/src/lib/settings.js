@@ -21,7 +21,7 @@ export const DEFAULT_SETTINGS = {
   theme: "dark",
   accent: "violet",
   codec: "h264", // h264 | hevc | av1
-  encoder: "auto", // auto | cpu | amf | nvenc | qsv | videotoolbox
+  encoder: "auto", // auto | cpu | amf | nvenc | qsv | videotoolbox | vaapi
   outputDir: null, // null: jedes Mal fragen
 };
 

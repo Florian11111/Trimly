@@ -187,7 +187,8 @@ test("the web version switches to the editor and back without losing the trim vi
   fireEvent.click(screen.getByRole("tab", { name: "Editor" }));
   expect(screen.getByRole("tab", { name: "Editor" })).toHaveAttribute("aria-selected", "true");
   // jsdom lädt keine Videodaten, daher zeigt der Editor seinen Wartehinweis
-  expect(screen.getByText(/Load a video in the Trim tab first/)).toBeInTheDocument();
+  // (der Editor wird nachgeladen, darum findBy)
+  expect(await screen.findByText(/Load a video in the Trim tab first/)).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("tab", { name: "Trim" }));
   expect(screen.getByLabelText("No sound")).toBeChecked();

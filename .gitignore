@@ -52,6 +52,8 @@ docker-compose.override.yml
 .env
 .env.local
 .env.*
+# ohne Geheimnisse, nur Build-Optionen (keine Source-Maps im Bundle)
+!frontend/.env.production
 
 # === VSCode Workspace ===
 .vscode/
