@@ -1,9 +1,10 @@
-export function formatBytes(bytes) {
+// exact: zwei Nachkommastellen für gemessene Größen (Schätzungen bleiben bei einer)
+export function formatBytes(bytes, { exact = false } = {}) {
   if (!bytes || bytes < 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
   const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
   const value = bytes / Math.pow(1024, i);
-  const digits = i === 0 || value >= 100 ? 0 : 1;
+  const digits = i === 0 ? 0 : exact ? 2 : value >= 100 ? 0 : 1;
   return `${value.toFixed(digits)} ${units[i]}`;
 }
 

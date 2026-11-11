@@ -136,8 +136,9 @@ fn encoder_info_blocking(codec: &str, preference: &str) -> EncoderInfo {
     let hardware = t.ffmpeg.is_some() && ffmpeg::is_hardware(&chosen);
     let label = match &t.ffmpeg {
         None => MISSING_FFMPEG.to_string(),
-        Some(_) if hardware => format!("Encoding with {} (hardware)", ffmpeg::encoder_label(&chosen)),
-        Some(_) => "Encoding with libx264 (software)".to_string(),
+        // kurz, damit es unter dem Export-Knopf in eine Zeile passt
+        Some(_) if hardware => format!("Hardware: {}", ffmpeg::encoder_label(&chosen)),
+        Some(_) => "Software: libx264".to_string(),
     };
     let options = ffmpeg::FAMILIES
         .iter()
@@ -519,9 +520,12 @@ fn path_exists(path: String) -> bool {
     Path::new(&path).is_dir()
 }
 
+#[cfg(target_os = "macos")]
+const OPEN_MENU_ID: &str = "open-new-file";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // Muss das erste Plugin sein: ein zweiter Start (z. B. „Öffnen mit“ unter Windows) gibt
         // seine Datei an das laufende Fenster weiter, statt ein zweites zu öffnen.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -537,7 +541,32 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Running::default())
-        .manage(PendingFile::default())
+        .manage(PendingFile::default());
+
+    // macOS: Standard-Menüleiste plus „Open New File…“ (⌘O) unter „File“. Windows behält
+    // seine Fenster ohne Menüleiste; dort öffnet das Home-Symbol bzw. Strg+O.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(|app| {
+            use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+            let menu = Menu::default(app)?;
+            for item in menu.items()? {
+                if let Some(sub) = item.as_submenu() {
+                    if sub.text()? == "File" {
+                        let open = MenuItem::with_id(app, OPEN_MENU_ID, "Open New File…", true, Some("CmdOrCtrl+O"))?;
+                        sub.prepend_items(&[&open, &PredefinedMenuItem::separator(app)?])?;
+                    }
+                }
+            }
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == OPEN_MENU_ID {
+                let _ = app.emit("menu-open", ());
+            }
+        });
+
+    let app = builder
         .setup(|app| {
             let server = MediaServer::start().map_err(|e| format!("Preview server: {e}"))?;
             app.manage(server);

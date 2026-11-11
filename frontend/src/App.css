@@ -58,11 +58,6 @@
   white-space: nowrap;
 }
 
-.file-size {
-  color: var(--muted);
-  flex: none;
-}
-
 /* ─── Knöpfe ───────────────────────────────────────────────────────────── */
 
 .btn {
@@ -144,8 +139,10 @@
   gap: 2px;
   margin-left: auto;
   padding: 3px;
-  border-radius: 8px;
-  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  /* im Dunklen hell abgesetzt statt schwarz, damit der Umschalter als solcher erkennbar ist */
+  background: var(--raised);
 }
 
 .tabs + .btn {
@@ -163,10 +160,15 @@
   cursor: pointer;
 }
 
-.tab.is-active {
-  background: var(--raised);
+.tab:hover:not(.is-active) {
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.5);
+  background: var(--raised);
+}
+
+.tab.is-active {
+  background: rgba(var(--accent-rgb), 0.28);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.6);
 }
 
 .workspace[hidden],
@@ -367,21 +369,6 @@
   margin-left: auto;
 }
 
-/* Rückgängig / Wiederholen, rechts vor Start/End */
-.history-buttons {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.history-buttons + .marks {
-  margin-left: 4px;
-}
-
-.history-buttons .btn-icon {
-  width: 30px;
-  height: 30px;
-}
 
 .mark {
   display: flex;
@@ -426,6 +413,11 @@ kbd {
 }
 
 /* ─── Timeline ─────────────────────────────────────────────────────────── */
+
+/* Die Griffe sitzen 14 px außerhalb der Leiste; so schließt die Klammer bündig mit dem Player ab */
+.timeline {
+  padding: 0 14px;
+}
 
 .timeline-track {
   position: relative;
@@ -824,10 +816,14 @@ input[type="range"] {
   color: var(--danger);
 }
 
+/* immer einzeilig; wird es doch zu eng, kürzt „…“ und der Tooltip zeigt alles */
 .encoder {
   margin: 0;
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ─── Qualität: Modus-Umschalter mit kleinem Unterbereich ─────────────── */
@@ -921,6 +917,93 @@ fieldset:disabled .segment {
   flex: none;
   width: 40px;
   height: 40px;
+}
+
+/* Kleiner Pfeil links vom Export-Knopf mit „Nur berechnen“ */
+.export-menu {
+  position: relative;
+  flex: none;
+}
+
+.export-row .export-more {
+  width: 28px;
+  height: 40px;
+}
+
+.export-menu .menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 260px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--popover);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: 0 24px 60px -24px var(--shadow);
+}
+
+.menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: rgba(var(--accent-rgb), 0.16);
+  outline: none;
+}
+
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.menu-label {
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.menu-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.summary-size .is-exact {
+  color: var(--accent-soft);
+}
+
+/* Lautstärke nur für den Player, neben der Zeit */
+.player-volume {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.player-volume .btn-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.player-volume .output-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.player-volume input[type="range"] {
+  width: 76px;
 }
 
 /* ─── Einstellungen (Zahnrad) ──────────────────────────────────────────── */

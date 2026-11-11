@@ -125,23 +125,16 @@ test("shows upload progress while the original is sent", async () => {
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 });
 
-test("Ctrl+Z and the undo button take back settings, Ctrl+Y redoes them", async () => {
+test("Ctrl+Z takes back settings, Ctrl+Y redoes them; trim has no undo buttons", async () => {
   await renderWithVideo();
-  const undo = screen.getByRole("button", { name: "Undo" });
-  const redo = screen.getByRole("button", { name: "Redo" });
-  expect(undo).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByLabelText("No sound"));
-  expect(undo).toBeEnabled();
   fireEvent.keyDown(window, { code: "KeyZ", ctrlKey: true });
   expect(screen.getByLabelText("With sound")).toBeChecked();
-  expect(redo).toBeEnabled();
 
   fireEvent.keyDown(window, { code: "KeyY", ctrlKey: true });
   expect(screen.getByLabelText("No sound")).toBeChecked();
-
-  fireEvent.click(undo);
-  expect(screen.getByLabelText("With sound")).toBeChecked();
 });
 
 test("several changes are undone one after another", async () => {
@@ -198,4 +191,94 @@ test("the web version switches to the editor and back without losing the trim vi
 
   fireEvent.click(screen.getByRole("tab", { name: "Trim" }));
   expect(screen.getByLabelText("No sound")).toBeChecked();
+});
+
+// ─── „Nur berechnen“ und Player-Lautstärke ──────────────────────────────
+
+async function renderWithLoadedVideo() {
+  await renderWithVideo();
+  // Upload bestätigen
+  xhr.responseText = JSON.stringify({ status: "success", originalId: "orig-1" });
+  act(() => xhr.onload());
+  const el = document.querySelector("video");
+  Object.defineProperty(el, "duration", { value: 10, configurable: true });
+  Object.defineProperty(el, "videoWidth", { value: 1920, configurable: true });
+  Object.defineProperty(el, "videoHeight", { value: 1080, configurable: true });
+  fireEvent.loadedMetadata(el);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Export and download" })).toBeEnabled());
+}
+
+function mockServer() {
+  const calls = [];
+  global.fetch = jest.fn(async (url) => {
+    calls.push(String(url));
+    const body = String(url).endsWith("/process")
+      ? { status: "success", filename: "result.mp4" }
+      : { status: "ready", size: 1234567 };
+    return { json: async () => body };
+  });
+  return calls;
+}
+
+async function calculate() {
+  fireEvent.click(screen.getByRole("button", { name: "More export options" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: /Calculate exact size/ }));
+  await screen.findByText(/^exactly /, {}, { timeout: 3000 });
+}
+
+test("calculating shows the exact size and a later export downloads without encoding again", async () => {
+  await renderWithLoadedVideo();
+  const calls = mockServer();
+  const click = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+  await calculate();
+  expect(screen.getByText("exactly 1.18 MB")).toBeInTheDocument();
+  expect(click).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Export and download" }));
+  await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+  expect(calls.filter((u) => u.endsWith("/process"))).toHaveLength(1);
+  expect(await screen.findByText(/is ready/)).toBeInTheDocument();
+  click.mockRestore();
+});
+
+test("changing a setting discards a calculated result", async () => {
+  await renderWithLoadedVideo();
+  mockServer();
+  await calculate();
+  fireEvent.click(screen.getByLabelText(/High/));
+  expect(screen.queryByText(/^exactly /)).not.toBeInTheDocument();
+  expect(screen.getByText(/^about /)).toBeInTheDocument();
+});
+
+test("the player has its own volume that doesn't touch the export volume", async () => {
+  await renderWithVideo();
+  const player = screen.getByRole("slider", { name: "Player volume" });
+  fireEvent.change(player, { target: { value: "0.3" } });
+  expect(document.querySelector("video").volume).toBeCloseTo(0.3);
+  expect(screen.getByRole("slider", { name: "Volume" })).toHaveValue("1");
+
+  fireEvent.click(screen.getByRole("button", { name: "Mute player" }));
+  expect(document.querySelector("video").muted).toBe(true);
+  expect(window.localStorage.getItem("trimly.playerVolume")).toBe("0.3");
+});
+
+test("the home button goes back to the start screen", async () => {
+  await renderWithVideo();
+  fireEvent.click(screen.getByRole("button", { name: "Start screen" }));
+  expect(screen.getByRole("heading", { name: /Drop a video here/ })).toBeInTheDocument();
+  expect(screen.queryByText("clip.mp4")).not.toBeInTheDocument();
+});
+
+test("Ctrl+O opens the file chooser", async () => {
+  await renderReady();
+  const click = jest.spyOn(screen.getByTestId("file-input"), "click").mockImplementation(() => {});
+  fireEvent.keyDown(window, { code: "KeyO", ctrlKey: true });
+  await waitFor(() => expect(click).toHaveBeenCalled());
+});
+
+test("the encoder note sits in the export column", async () => {
+  await renderWithVideo();
+  const note = await screen.findByText("Encoding on the server");
+  expect(note.closest(".panel")).not.toBeNull();
 });
