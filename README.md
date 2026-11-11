@@ -50,7 +50,8 @@ Right-click any video → *Open with → Trimly*.
 
 ## For developers
 
-### Self-hosting the web version
+<details>
+<summary><b>Self-hosting the web version</b></summary>
 
 The same interface also runs in the browser, with a server doing the encoding. Useful on a home
 server or for people who can't install apps.
@@ -80,11 +81,10 @@ APPLICATION_SECRET=$(openssl rand -base64 32) \
 
 The web version currently encodes H.264 only. Uploaded files are temporary: the server deletes them
 after a while and forgets them when it restarts.
-
-### Building the desktop app
+</details>
 
 <details>
-<summary><b>Windows</b></summary>
+<summary><b>Building on Windows</b></summary>
 
 Install the tools (open a new terminal afterwards, otherwise `npm` isn't found):
 
@@ -110,7 +110,7 @@ The installer is in `frontend/src-tauri/target/release/bundle/nsis/`, an `.msi` 
 </details>
 
 <details>
-<summary><b>macOS</b></summary>
+<summary><b>Building on macOS</b></summary>
 
 You need [Homebrew](https://brew.sh):
 
@@ -124,7 +124,7 @@ Homebrew; Trimly also finds it when started from the Finder.
 </details>
 
 <details>
-<summary><b>Linux</b> (Debian/Ubuntu)</summary>
+<summary><b>Building on Linux</b> (Debian/Ubuntu)</summary>
 
 ```bash
 sudo apt install build-essential curl file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
@@ -140,7 +140,8 @@ reports a conflict. The GStreamer plugins are needed for the video preview. The 
 with VA-API; `TRIMLY_VAAPI_DEVICE` picks another card than `/dev/dri/renderD128`.
 </details>
 
-### Developing
+<details>
+<summary><b>Developing and tests</b></summary>
 
 ```bash
 cd frontend && npm run desktop     # desktop app with hot reload
@@ -152,7 +153,7 @@ cd frontend && npm start           # only the interface, in the browser (talks t
 | `TRIMLY_ENCODER=cpu` | Force software encoding (libx264) |
 | `TRIMLY_VAAPI_DEVICE` | Linux: VA-API device, default `/dev/dri/renderD128` |
 
-### Tests
+Tests:
 
 ```bash
 cd frontend && CI=true npm test -- --watchAll=false
@@ -162,23 +163,7 @@ docker compose run --rm backend sbt -batch test
 
 The Rust and backend tests call the real ffmpeg with `backend/test/resources/testVideo.mp4`. If ffmpeg
 or the video is missing, those tests are skipped instead of failing.
-
-### How it works
-
-| Part | Tech | Folder |
-|---|---|---|
-| Interface | React 19 | `frontend/src/` |
-| Desktop app | Tauri 2, Rust, runs ffmpeg on the local file | `frontend/src-tauri/` |
-| Web backend | Scala 2.13, Play Framework 3 | `backend/` |
-| Editor | Clips, audio track, overlays, zoom | `frontend/src/editor/` |
-| Video | ffmpeg / ffprobe | |
-
-The interface talks to Rust in the desktop app and to the backend over HTTP in the browser, through
-the small layer in `frontend/src/platform/`. Which one is used is decided at startup, depending on
-whether the page runs inside Tauri.
-
-On startup the desktop app runs a short test encode on every hardware encoder and only offers the
-ones that work. If the hardware fails on a single video, it encodes it again with libx264.
+</details>
 
 ## License
 
