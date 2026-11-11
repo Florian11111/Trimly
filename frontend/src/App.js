@@ -578,6 +578,7 @@ export default function App() {
         <span />
         <span />
         <span />
+        <span />
       </div>
       <header className="topbar" data-tauri-drag-region>
         <span className="brand" data-tauri-drag-region>
