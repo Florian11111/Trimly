@@ -2,7 +2,7 @@
 //! Reine Logik (Prüfen, ffmpeg-Argumente bauen) ohne Prozesse, damit alles testbar ist.
 //! Das Projekt kommt von `buildRenderProject` im Frontend; `originalId` ist hier der Dateipfad.
 
-use crate::ffmpeg::{encoder_args, AUDIO_ONLY_KBPS};
+use crate::ffmpeg::{encoder_args, Crop, AUDIO_ONLY_KBPS};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -84,6 +84,9 @@ pub struct EditProject {
     /// "both", "video" (ohne Ton) oder "audio" (nur Ton als MP3)
     #[serde(default = "default_output")]
     pub output: String,
+    /// Freier Zuschnitt des Ausgabebildes (relativ, 0..1); das Ergebnis wird entsprechend kleiner
+    #[serde(default)]
+    pub crop: Option<Crop>,
 }
 
 fn default_output() -> String {
@@ -137,6 +140,9 @@ pub fn validate(p: &EditProject, overlay_files: &HashMap<String, String>) -> Res
     }
     if p.total() > 6.0 * 3600.0 {
         return err("The project is too long (6 hours at most).");
+    }
+    if p.crop.is_some_and(|c| !c.valid()) {
+        return err("The crop area is invalid.");
     }
     if !["both", "video", "audio"].contains(&p.output.as_str()) {
         return err("The output format is invalid.");
@@ -278,7 +284,9 @@ pub fn build_video_args(
         ));
         current = format!("[vo{i}]");
     }
-    g.filters.push(format!("{current}format=yuv420p[vout]"));
+    // Zuschnitt zuletzt, damit Zoom und Overlays im Ausschnitt so liegen wie in der Vorschau
+    let crop = p.crop.map(|c| format!("{},", c.filter())).unwrap_or_default();
+    g.filters.push(format!("{current}{crop}format=yuv420p[vout]"));
 
     let with_audio = p.output != "video" && add_audio(p, total, has_audio, &mut g);
 
@@ -412,5 +420,16 @@ mod tests {
         let mut p = project();
         p.video[1].speed = 8.0;
         assert!(validate(&p, &files()).unwrap_err().contains("speed"));
+    }
+
+    #[test]
+    fn crop_comes_last_and_is_checked() {
+        let mut p = project();
+        p.crop = Some(Crop { x: 0.25, y: 0.0, w: 0.3164, h: 1.0 });
+        assert!(validate(&p, &files()).is_ok());
+        let graph = build_video_args(&p, &files(), 30.0, &|_| true, "libx264", "o.mp4").join(" ");
+        assert!(graph.contains("[vo0]crop=trunc(iw*0.316/2)*2:trunc(ih*1/2)*2:trunc(iw*0.25):trunc(ih*0),format=yuv420p[vout]"), "{graph}");
+        p.crop = Some(Crop { x: 0.9, y: 0.0, w: 0.5, h: 1.0 });
+        assert_eq!(validate(&p, &files()).unwrap_err(), "The crop area is invalid.");
     }
 }

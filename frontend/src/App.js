@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
-import CropOverlay from "./components/CropOverlay";
 import Settings from "./components/Settings";
 import Timeline from "./components/Timeline";
 import Editor from "./editor/Editor";
@@ -42,9 +41,6 @@ export default function App() {
   const [quality, setQuality] = useState(DEFAULT_QUALITY); // { mode, presetId, custom, sizeMb }
   const [volume, setVolume] = useState(1);
   const [output, setOutput] = useState("both"); // both | video | audio
-  // Freier Zuschnitt {x, y, w, h} relativ zum Bild (0..1), null = ganzes Bild; nur Desktop
-  const [crop, setCrop] = useState(null);
-  const [cropEditing, setCropEditing] = useState(false);
 
   const [job, setJob] = useState(null); // { state: running|done|error, progress, result, message }
   const [dragging, setDragging] = useState(false);
@@ -68,9 +64,8 @@ export default function App() {
     setQuality(s.quality);
     setVolume(s.volume);
     setOutput(s.output);
-    setCrop(s.crop);
   }, []);
-  const history = useUndo({ range, quality, volume, output, crop }, applySnapshot);
+  const history = useUndo({ range, quality, volume, output }, applySnapshot);
   const { rebase } = history;
 
   // ─── Plattform laden ────────────────────────────────────────────────────
@@ -113,9 +108,7 @@ export default function App() {
     setTab("trim");
     setEditorOpened(false);
     setOriginalId(null);
-    setCrop(null);
-    setCropEditing(false);
-    rebase({ range: [0, 0], quality: DEFAULT_QUALITY, volume: 1, output: "both", crop: null });
+    rebase({ range: [0, 0], quality: DEFAULT_QUALITY, volume: 1, output: "both" });
     if (inputRef.current) inputRef.current.value = "";
   }, [rebase]);
 
@@ -339,10 +332,6 @@ export default function App() {
         case "KeyE":
           setOut();
           break;
-        case "Escape":
-        case "Enter":
-          setCropEditing(false); // Zuschnitt fertig
-          break;
         default:
       }
     };
@@ -390,15 +379,7 @@ export default function App() {
     [meta, video]
   );
   const clipLength = Math.max(0, range[1] - range[0]);
-  // Zugeschnitten rechnen Auflösung und Zielgröße mit dem Ausschnitt statt mit dem ganzen Bild
-  const cropped = useMemo(
-    () =>
-      source && crop
-        ? { ...source, width: Math.round(source.width * crop.w), height: Math.round(source.height * crop.h) }
-        : source,
-    [source, crop]
-  );
-  const target = cropped ? resolveQuality(quality, cropped, clipLength, output, codec) : null;
+  const target = source ? resolveQuality(quality, source, clipLength, output, codec) : null;
   const estimate = source ? estimateBytes(target, clipLength, source, output) : 0;
   const hasAudio = video?.ref?.info ? video.ref.info.hasAudio : true;
 
@@ -410,25 +391,8 @@ export default function App() {
   // Geänderte Einstellungen machen ein altes Ergebnis ungültig
   useEffect(() => {
     setJob((j) => (j?.state === "done" ? null : j));
-  }, [quality, volume, range, output, crop, settings.codec, settings.encoder]);
+  }, [quality, volume, range, output, settings.codec, settings.encoder]);
 
-  // Crop ein/aus. „Original“ kopiert nur und kann nicht zuschneiden, darum dann Compress.
-  const toggleCrop = () => {
-    if (cropEditing) {
-      setCropEditing(false);
-      return;
-    }
-    if (!crop) setCrop({ x: 0, y: 0, w: 1, h: 1 });
-    if (quality.mode === "original") setQ({ mode: "compress" });
-    videoRef.current?.pause();
-    setCropEditing(true);
-  };
-  const resetCrop = () => {
-    setCrop(null);
-    setCropEditing(false);
-  };
-  // Ein Rahmen über das ganze Bild ist kein Zuschnitt
-  const cropActive = !!crop && !(crop.x < 0.001 && crop.y < 0.001 && crop.w > 0.999 && crop.h > 0.999);
 
   // Video ohne Tonspur: nur Video exportieren
   useEffect(() => {
@@ -450,7 +414,6 @@ export default function App() {
           volume,
           target,
           output,
-          crop: desktop && cropActive && !target.copy ? crop : null,
           // Zielgröße hart einhalten (Desktop kodiert nach, wenn der Encoder darüber liegt)
           maxBytes:
             quality.mode === "size" && output !== "audio" && Number(quality.sizeMb) > 0
@@ -596,16 +559,6 @@ export default function App() {
                 playsInline
                 preload="auto"
               />
-              {desktop && meta && (
-                <CropOverlay
-                  crop={crop}
-                  editing={cropEditing}
-                  aspect={meta.width / meta.height}
-                  sourceSize={source}
-                  videoRef={videoRef}
-                  onChange={setCrop}
-                />
-              )}
             </div>
 
             <div className="transport">
@@ -621,25 +574,6 @@ export default function App() {
                 {formatTime(current)}
                 <span className="time-total"> / {formatTime(meta?.duration)}</span>
               </span>
-              {desktop && (
-                <span className="crop-buttons">
-                  <button
-                    className={`btn btn-icon btn-quiet ${cropEditing ? "is-active" : ""}`}
-                    onClick={toggleCrop}
-                    disabled={!meta || running}
-                    aria-label="Crop"
-                    aria-pressed={cropEditing}
-                    title={cropEditing ? "Done cropping (Enter)" : "Crop to any size"}
-                  >
-                    <CropIcon />
-                  </button>
-                  {crop && (
-                    <button className="btn btn-quiet btn-small" onClick={resetCrop} disabled={running}>
-                      Reset crop
-                    </button>
-                  )}
-                </span>
-              )}
               <span className="history-buttons">
                 <button
                   className="btn btn-icon btn-quiet"
@@ -700,7 +634,7 @@ export default function App() {
                   <label
                     key={m.id}
                     className={`segment ${quality.mode === m.id ? "is-active" : ""}`}
-                    title={m.id === "original" && cropActive ? "Cropping needs re-encoding. Reset the crop to cut only." : m.hint}
+                    title={m.hint}
                   >
                     <input
                       type="radio"
@@ -708,7 +642,6 @@ export default function App() {
                       value={m.id}
                       checked={quality.mode === m.id}
                       onChange={() => setQ({ mode: m.id })}
-                      disabled={m.id === "original" && cropActive}
                     />
                     <span>{m.label}</span>
                   </label>
@@ -1060,12 +993,6 @@ const PlayIcon = () => (
 const PauseIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z" fill="currentColor" />
-  </svg>
-);
-
-const CropIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M7 3v14h14M3 7h14v14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 

@@ -15,7 +15,18 @@ export const MIN_LEN = 0.01;
 let nextId = 1;
 export const newId = (prefix) => `${prefix}${Date.now().toString(36)}_${nextId++}`;
 
-export const emptyProject = () => ({ clips: {}, videoSegs: [], audioSegs: null, overlays: [], zooms: [] });
+// crop: null | { x, y, w, h } relativ zum Ausgabebild (0..1), freies Format, gilt für das ganze Projekt
+export const emptyProject = () => ({ clips: {}, videoSegs: [], audioSegs: null, overlays: [], zooms: [], crop: null });
+
+// Ein Rahmen über das ganze Bild ist kein Zuschnitt
+export const isCropped = (crop) =>
+  !!crop && !(crop.x < 0.001 && crop.y < 0.001 && crop.w > 0.999 && crop.h > 0.999);
+
+// Ausgabegröße nach dem Zuschnitt, gerade Kanten wie in ffmpeg (trunc(iw*w/2)*2)
+export const croppedSize = (width, height, crop) =>
+  isCropped(crop)
+    ? { width: Math.trunc((width * crop.w) / 2) * 2, height: Math.trunc((height * crop.h) / 2) * 2 }
+    : { width, height };
 
 // Wählbares Tempo; ffmpeg rendert es mit setpts (Bild) und atempo (Ton, Tonhöhe bleibt)
 export const SPEEDS = [0.25, 0.5, 1, 1.5, 2, 4];
@@ -173,6 +184,7 @@ export function buildRenderProject(project, preset, originalIds, output = "both"
       .map(s => ({ originalId: originalId(s.clipId), start: s.srcStart, end: s.srcEnd, at: s.tlStart, volume: s.volume, speed: speedOf(s) })),
     zooms: project.zooms.filter(inRange).map(({ start, end, x, y, w }) => ({ start, end: Math.min(end, total), x, y, w })),
     overlays: overlays.map((o, i) => ({ file: `overlay_${i}`, start: o.start, end: Math.min(o.end, total) })),
+    crop: isCropped(project.crop) ? project.crop : null,
     output,
   };
   return { body, overlays };

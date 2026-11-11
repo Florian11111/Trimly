@@ -78,7 +78,6 @@ fn encodes_scaled_trimmed_clip() {
         codec: "h264".into(),
         encoder: "auto".into(),
         max_bytes: None,
-        crop: None,
     };
     run(&ff, &req, encoder(&ff));
 
@@ -110,7 +109,6 @@ fn software_encoder_works_too() {
         codec: "h264".into(),
         encoder: "auto".into(),
         max_bytes: None,
-        crop: None,
     };
     run(&ff, &req, ffmpeg::SW_ENCODER);
     assert_eq!(probe(&ffprobe, &output).width, 320);
@@ -137,7 +135,6 @@ fn copy_mode_keeps_resolution_and_cuts_length() {
         codec: "h264".into(),
         encoder: "auto".into(),
         max_bytes: None,
-        crop: None,
     };
     run(&ff, &req, ffmpeg::SW_ENCODER);
 
@@ -168,7 +165,6 @@ fn exports_audio_only_as_mp3_and_video_without_audio() {
         codec: "h264".into(),
         encoder: "auto".into(),
         max_bytes: None,
-        crop: None,
     };
     run(&ff, &req, ffmpeg::SW_ENCODER);
     let out = Command::new(&ffprobe)
@@ -267,7 +263,6 @@ fn encodes_hevc_and_av1_with_available_hardware() {
             codec: "av1".into(),
             encoder: "auto".into(),
             max_bytes: None,
-            crop: None,
         };
         run(&ff, &req, &enc);
         let info = probe(&ffprobe, &output);
@@ -304,31 +299,26 @@ fn renders_editor_speed_changes() {
     let _ = std::fs::remove_file(&out);
 }
 
-/// Freier Zuschnitt: linke Hälfte, Hochformat-Ausschnitt aus 2560×1440 → 640×720 (auf 720 skaliert)
+/// Editor-Zuschnitt: Hochformat-Streifen aus dem 640×360-Ausgabebild → 202×360
 #[test]
-fn crops_any_area_before_scaling() {
+fn renders_editor_crop() {
+    use std::collections::HashMap;
+    use trimly_lib::edit;
     let Some((ff, ffprobe, video)) = setup() else { return };
-    let output = out_path("crop.mp4");
-    let req = ExportRequest {
-        input: video.display().to_string(),
-        output: output.display().to_string(),
-        start: 1.0,
-        end: 2.0,
-        volume: 1.0,
-        copy: false,
-        width: Some(640),
-        height: Some(720),
-        fps: Some(30.0),
-        bitrate: Some(800),
-        audio_bitrate: None,
-        streams: "both".into(),
-        codec: "h264".into(),
-        encoder: "auto".into(),
-        max_bytes: None,
-        crop: Some(ffmpeg::Crop { x: 0.0, y: 0.0, w: 0.5, h: 1.0 }),
-    };
-    run(&ff, &req, ffmpeg::SW_ENCODER);
-    let info = probe(&ffprobe, &output);
-    assert_eq!((info.width, info.height), (640, 720));
-    let _ = std::fs::remove_file(output);
+    let v = video.display().to_string().replace('\\', "\\\\");
+    let project: edit::EditProject = serde_json::from_str(&format!(
+        r#"{{"preset": {{"width": 640, "height": 360, "fps": 30, "bitrate": 800}},
+            "video": [{{"originalId": "{v}", "start": 1, "end": 2}}],
+            "crop": {{"x": 0.342, "y": 0, "w": 0.316, "h": 1}}}}"#
+    ))
+    .unwrap();
+    let files = HashMap::new();
+    edit::validate(&project, &files).unwrap();
+    let out = out_path("editcrop.mp4");
+    let args = edit::build_video_args(&project, &files, 60.0, &|_| true, encoder(&ff), &out.display().to_string());
+    let res = Command::new(&ff).args(&args).output().unwrap();
+    assert!(res.status.success(), "ffmpeg fehlgeschlagen: {}", String::from_utf8_lossy(&res.stderr));
+    let info = probe(&ffprobe, &out);
+    assert_eq!((info.width, info.height), (202, 360));
+    let _ = std::fs::remove_file(&out);
 }

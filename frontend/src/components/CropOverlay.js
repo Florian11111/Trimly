@@ -28,40 +28,25 @@ export function dragCrop(start, mode, dx, dy) {
   return { x, y, w, h };
 }
 
-/** Sichtbare Bildfläche eines object-fit:contain-Videos innerhalb seines Elternelements. */
-function contentRect(video, aspect) {
-  const parent = video.parentElement.getBoundingClientRect();
-  const box = video.getBoundingClientRect();
-  let width = box.width;
-  let height = box.width / aspect;
-  if (height > box.height) {
-    height = box.height;
-    width = box.height * aspect;
-  }
-  return {
-    left: box.left - parent.left + (box.width - width) / 2,
-    top: box.top - parent.top + (box.height - height) / 2,
-    width,
-    height,
-  };
-}
-
-export default function CropOverlay({ crop, editing, aspect, sourceSize, videoRef, onChange }) {
+/**
+ * Liegt als Kind im Bildrahmen (`frameRef`, position: relative) und füllt ihn ganz aus.
+ * `sourceSize` = Ausgabegröße des ganzen Bildes, für die Pixelangabe im Rahmen.
+ */
+export default function CropOverlay({ crop, editing, sourceSize, frameRef, onChange, onDragStart }) {
   const [rect, setRect] = useState(null);
   const drag = useRef(null);
 
-  // Lage des Bildes verfolgen (Fenstergröße, Metadaten geladen)
+  // Größe des Bildrahmens verfolgen (Fenstergröße)
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !aspect) return undefined;
-    const update = () => setRect(contentRect(video, aspect));
+    const frame = frameRef.current;
+    if (!frame) return undefined;
+    const update = () => setRect({ left: 0, top: 0, width: frame.clientWidth, height: frame.clientHeight });
     update();
     if (typeof ResizeObserver === "undefined") return undefined;
     const ro = new ResizeObserver(update);
-    ro.observe(video);
-    ro.observe(video.parentElement);
+    ro.observe(frame);
     return () => ro.disconnect();
-  }, [videoRef, aspect]);
+  }, [frameRef]);
 
   if (!crop || !rect) return null;
 
@@ -70,6 +55,7 @@ export default function CropOverlay({ crop, editing, aspect, sourceSize, videoRe
     e.stopPropagation();
     e.currentTarget.setPointerCapture?.(e.pointerId);
     drag.current = { mode, x: e.clientX, y: e.clientY, crop };
+    onDragStart?.();
   };
   const move = (e) => {
     const d = drag.current;

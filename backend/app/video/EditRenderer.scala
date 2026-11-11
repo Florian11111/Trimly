@@ -17,13 +17,18 @@ case class EditAudioSeg(originalId: String, start: Double, end: Double, at: Doub
 case class EditZoom(start: Double, end: Double, x: Double, y: Double, w: Double)
 // Overlay = transparentes PNG in Ausgabegröße (Pfeile, Text, Bilder rendert der Browser)
 case class EditOverlay(file: String, start: Double, end: Double)
+// Freier Zuschnitt des Ausgabebildes (relativ, 0..1); das Ergebnis wird entsprechend kleiner
+case class EditCrop(x: Double, y: Double, w: Double, h: Double) {
+  def valid: Boolean = x >= 0 && y >= 0 && w > 0.01 && h > 0.01 && x + w <= 1.001 && y + h <= 1.001
+}
 case class EditProject(
   preset: EditPreset,
   video: Seq[EditVideoSeg],
   audio: Seq[EditAudioSeg],
   zooms: Seq[EditZoom],
   overlays: Seq[EditOverlay],
-  output: String = "both" // "both", "video" (ohne Ton) oder "audio" (nur Ton als MP3)
+  output: String = "both", // "both", "video" (ohne Ton) oder "audio" (nur Ton als MP3)
+  crop: Option[EditCrop] = None
 )
 
 object EditProject {
@@ -32,6 +37,7 @@ object EditProject {
   implicit val audioReads: Reads[EditAudioSeg] = Json.using[Json.WithDefaultValues].reads[EditAudioSeg]
   implicit val zoomReads: Reads[EditZoom] = Json.reads[EditZoom]
   implicit val overlayReads: Reads[EditOverlay] = Json.reads[EditOverlay]
+  implicit val cropReads: Reads[EditCrop] = Json.reads[EditCrop]
   implicit val projectReads: Reads[EditProject] = Json.using[Json.WithDefaultValues].reads[EditProject]
 }
 
@@ -76,6 +82,7 @@ object EditRenderer {
     else if (p.preset.width < 16 || p.preset.height < 16 || p.preset.fps <= 0 || p.preset.bitrate <= 0)
       Some("Ungültige Export-Einstellungen.")
     else if (total > 6 * 3600) Some("Projekt ist zu lang.")
+    else if (p.crop.exists(c => !c.valid)) Some("Ungültiger Zuschnitt.")
     else if (!Set("both", "video", "audio").contains(p.output)) Some("Ungültiges Ausgabeformat.")
     else None
   }
@@ -134,7 +141,11 @@ object EditRenderer {
       filters += s"$current[ov$i]overlay=0:0:enable='between(t,${num(o.start)},${num(o.end)})':shortest=1[vo$i]"
       current = s"[vo$i]"
     }
-    filters += s"${current}format=yuv420p[vout]"
+    // Zuschnitt zuletzt, damit Zoom und Overlays im Ausschnitt so liegen wie in der Vorschau
+    val crop = p.crop.map(c =>
+      s"crop=trunc(iw*${num(c.w)}/2)*2:trunc(ih*${num(c.h)}/2)*2:trunc(iw*${num(c.x)}):trunc(ih*${num(c.y)}),"
+    ).getOrElse("")
+    filters += s"${current}${crop}format=yuv420p[vout]"
 
     // Tonspur: Abschnitte mit Versatz auf eine stille Grundspur in Videolänge mischen
     val audioLabels =

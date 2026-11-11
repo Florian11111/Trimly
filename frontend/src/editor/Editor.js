@@ -4,6 +4,7 @@ import Timeline, { overlayLabel } from "./Timeline";
 import { PRESETS } from "../presets";
 import * as P from "./project";
 import { drawOverlay, overlayBox, hitOverlay, hitZoom, zoomAt, isVisible, renderOverlayPng } from "./overlays";
+import CropOverlay from "../components/CropOverlay";
 
 // Muss zu VideoCalculator.AudioBitrateKbps bzw. FFmpegUtils.AudioOnlyBitrateKbps im Backend passen
 const AUDIO_KBPS = 128;
@@ -41,6 +42,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
   const [frameSize, setFrameSize] = useState({ w: 0, h: 0 });
   const [rootWidth, setRootWidth] = useState(800);
   const [imagesVersion, setImagesVersion] = useState(0);
+  const [cropEditing, setCropEditing] = useState(false);
 
   const projectRef = useRef(project);
   const historyRef = useRef([]);
@@ -591,12 +593,29 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
 
   const updateSelected = (patch) => commit(p => P.updateItem(p, selected.kind, selected.id, patch));
 
+  // Zuschnitt in freiem Format für das ganze Projekt; jeder Zug am Rahmen ist ein Rückgängig-Schritt
+  const toggleCrop = () => {
+    if (cropEditing) {
+      setCropEditing(false);
+      return;
+    }
+    if (!projectRef.current.crop) commit(p => ({ ...p, crop: { x: 0, y: 0, w: 1, h: 1 } }));
+    setPlaying(false);
+    setSelected(null);
+    setCropEditing(true);
+  };
+  const resetCrop = () => {
+    commit(p => ({ ...p, crop: null }));
+    setCropEditing(false);
+  };
+
   // ─── Tastatur ────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!active) return;
     const onKey = (e) => {
       if (isTyping(e)) return;
+      if (cropEditing && (e.code === "Escape" || e.code === "Enter")) { e.preventDefault(); setCropEditing(false); return; }
       if (e.code === "Space") { e.preventDefault(); setPlaying(p => !p); }
       else if ((e.ctrlKey || e.metaKey) && e.code === "KeyZ") { e.preventDefault(); undo(); }
       else if (e.code === "Delete" || e.code === "Backspace") { e.preventDefault(); removeSelected(); }
@@ -839,6 +858,14 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
             <video ref={videoRef} muted playsInline onLoadedMetadata={onVideoLoaded} />
           </div>
           <canvas ref={canvasRef} className="ed-canvas" onPointerDown={onFramePointerDown} />
+          <CropOverlay
+            crop={project.crop}
+            editing={cropEditing}
+            sourceSize={{ width: exportDims.width, height: exportDims.height }}
+            frameRef={frameRef}
+            onDragStart={snapshot}
+            onChange={(crop) => live(p => ({ ...p, crop }))}
+          />
         </div>
 
         <div className="ed-side">
@@ -875,6 +902,13 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
         <button type="button" className="ed-btn" onClick={addText}>T Text</button>
         <button type="button" className="ed-btn" onClick={() => imageInputRef.current?.click()}>🖼 Image</button>
         <button type="button" className="ed-btn" onClick={addZoom}>🔍 Zoom</button>
+        <button type="button" className={`ed-btn ${cropEditing ? "primary" : ""}`} onClick={toggleCrop}
+          aria-pressed={cropEditing} title={cropEditing ? "Done cropping (Enter)" : "Crop the output to any size"}>
+          ⬚ {cropEditing ? "Done" : "Crop"}
+        </button>
+        {P.isCropped(project.crop) && (
+          <button type="button" className="ed-btn" onClick={resetCrop}>Reset crop</button>
+        )}
         <input ref={videoInputRef} type="file" accept="video/*" style={{ display: "none" }}
           onChange={(e) => { addClipFile(e.target.files[0]); e.target.value = ""; }} />
         <input ref={imageInputRef} type="file" accept="image/*" style={{ display: "none" }}
@@ -918,7 +952,10 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
         <span className="ed-hint">
           {exportOutput === "audio"
             ? "MP3, 192 kbit/s"
-            : `${PRESETS[exportPreset].resolution}, ${PRESETS[exportPreset].fps} FPS`} · ≈ {formatFileSize(estimatedBytes)}
+            : (() => {
+                const { width, height } = P.croppedSize(exportDims.width, exportDims.height, project.crop);
+                return `${width}×${height}, ${PRESETS[exportPreset].fps} fps`;
+              })()} · ≈ {formatFileSize(estimatedBytes)}
         </span>
         <button type="button" className="ed-btn export" onClick={handleExport} disabled={exporting || total < 0.1}>
           {exporting ? "⏳ Exporting…" : "⬇ Export"}

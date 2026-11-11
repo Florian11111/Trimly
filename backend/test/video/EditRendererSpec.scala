@@ -79,6 +79,18 @@ class EditRendererSpec extends AnyFunSuite {
     assert(EditRenderer.validate(tooFast, Map.empty).exists(_.contains("Tempo")))
   }
 
+  test("crop makes a portrait video from the landscape frame") {
+    val out = File.createTempFile("edit_crop", ".mp4")
+    // 640×360, mittiger Streifen mit 9:16 → 202×360 (gerade Kanten)
+    val project = EditProject(preset, Seq(EditVideoSeg("a", 1, 2)), Seq.empty, Seq.empty, Seq.empty,
+      crop = Some(EditCrop(0.342, 0, 0.316, 1)))
+    val result = EditRenderer.render(project, paths, Map.empty, out.getAbsolutePath)
+    assert(result.isRight, result)
+    assert(probe(out, "-select_streams", "v", "-show_entries", "stream=width,height", "-of", "csv=p=0") == "202,360")
+    assert(EditRenderer.validate(project.copy(crop = Some(EditCrop(0.9, 0, 0.5, 1))), Map.empty).contains("Ungültiger Zuschnitt."))
+    out.delete()
+  }
+
   test("project without audio segments renders video only") {
     val out = File.createTempFile("edit_noaudio", ".mp4")
     val project = EditProject(preset, Seq(EditVideoSeg("a", 0, 1)), Seq.empty, Seq.empty, Seq.empty)

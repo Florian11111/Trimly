@@ -367,17 +367,6 @@
   margin-left: auto;
 }
 
-.crop-buttons {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.crop-buttons .btn-icon {
-  width: 30px;
-  height: 30px;
-}
-
 /* Rückgängig / Wiederholen, rechts vor Start/End */
 .history-buttons {
   display: flex;

@@ -275,11 +275,9 @@ pub struct ExportRequest {
     /// Zielgröße in Bytes (Modus „Target size“): größere Ergebnisse werden mit weniger Bitrate neu kodiert
     #[serde(default)]
     pub max_bytes: Option<u64>,
-    /// Freier Zuschnitt relativ zum Bild (0..1); width/height meinen dann die Größe nach dem Zuschnitt
-    #[serde(default)]
-    pub crop: Option<Crop>,
 }
 
+/// Freier Zuschnitt relativ zum Bild (0..1), genutzt vom Editor (edit.rs)
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct Crop {
     pub x: f64,
@@ -300,7 +298,7 @@ impl Crop {
         )
     }
 
-    fn valid(&self) -> bool {
+    pub fn valid(&self) -> bool {
         let ok = |v: f64| (0.0..=1.0).contains(&v);
         ok(self.x) && ok(self.y) && self.w > 0.01 && self.h > 0.01 && self.x + self.w <= 1.001 && self.y + self.h <= 1.001
     }
@@ -354,14 +352,6 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
     if req.input == req.output {
         return Err("The export can't overwrite the original. Choose another file name.".into());
     }
-    if let Some(c) = &req.crop {
-        if !c.valid() {
-            return Err("The crop area is invalid.".into());
-        }
-        if req.copy && req.streams != "audio" {
-            return Err("Cropping needs re-encoding. Choose Compress or Target size.".into());
-        }
-    }
 
     let mut a: Vec<String> = ["-hide_banner", "-nostats", "-y", "-progress", "pipe:1"]
         .iter()
@@ -397,15 +387,8 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
         push(&["-avoid_negative_ts", "make_zero"]);
     } else {
         let bitrate = req.bitrate.ok_or("The bitrate for encoding is missing.")?;
-        let mut vf: Vec<String> = Vec::new();
-        if let Some(c) = &req.crop {
-            vf.push(c.filter());
-        }
         if let (Some(w), Some(h)) = (req.width, req.height) {
-            vf.push(format!("scale={w}:{h}"));
-        }
-        if !vf.is_empty() {
-            push(&["-vf", &vf.join(",")]);
+            push(&["-vf", &format!("scale={w}:{h}")]);
         }
         if let Some(fps) = req.fps.filter(|f| *f > 0.0) {
             push(&["-fpsmax", &num(fps)]);
@@ -468,20 +451,15 @@ mod tests {
             codec: "h264".into(),
             encoder: "auto".into(),
             max_bytes: None,
-            crop: None,
         }
     }
 
     #[test]
-    fn crop_comes_before_scale_and_needs_encoding() {
-        let crop = Some(Crop { x: 0.25, y: 0.0, w: 0.5, h: 1.0 });
-        let req = ExportRequest { crop, width: Some(540), height: Some(720), ..request() };
-        let s = joined(&build_args(&req, HW).unwrap());
-        assert!(s.contains("-vf crop=trunc(iw*0.5/2)*2:trunc(ih*1/2)*2:trunc(iw*0.25):trunc(ih*0),scale=540:720"), "{s}");
-        let copy = ExportRequest { crop, copy: true, ..request() };
-        assert!(build_args(&copy, HW).unwrap_err().contains("re-encoding"));
-        let bad = ExportRequest { crop: Some(Crop { x: 0.8, y: 0.0, w: 0.5, h: 1.0 }), ..request() };
-        assert!(build_args(&bad, HW).is_err());
+    fn crop_filter_has_even_edges_and_checks_bounds() {
+        let c = Crop { x: 0.25, y: 0.0, w: 0.5, h: 1.0 };
+        assert_eq!(c.filter(), "crop=trunc(iw*0.5/2)*2:trunc(ih*1/2)*2:trunc(iw*0.25):trunc(ih*0)");
+        assert!(c.valid());
+        assert!(!Crop { x: 0.8, y: 0.0, w: 0.5, h: 1.0 }.valid());
     }
 
     #[test]

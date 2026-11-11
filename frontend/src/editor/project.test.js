@@ -123,3 +123,14 @@ test('render project sends the speed of video and audio', () => {
   expect(body.video[0].speed).toBe(0.5);
   expect(body.audio[0].speed).toBe(0.5);
 });
+
+test('crop: full frame is no crop, size has even edges, render sends it', () => {
+  expect(P.isCropped(null)).toBe(false);
+  expect(P.isCropped({ x: 0, y: 0, w: 1, h: 1 })).toBe(false);
+  const crop = { x: 0.342, y: 0, w: 0.316, h: 1 };
+  expect(P.croppedSize(1280, 720, crop)).toEqual({ width: 404, height: 720 });
+  expect(P.croppedSize(1280, 720, null)).toEqual({ width: 1280, height: 720 });
+  const preset = { width: 1280, height: 720, fps: 30, bitrate: 2500 };
+  expect(P.buildRenderProject({ ...base(), crop }, preset, { main: 'a' }).body.crop).toEqual(crop);
+  expect(P.buildRenderProject({ ...base(), crop: { x: 0, y: 0, w: 1, h: 1 } }, preset, { main: 'a' }).body.crop).toBeNull();
+});
