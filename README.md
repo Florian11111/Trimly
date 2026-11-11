@@ -32,7 +32,7 @@ No account, no subscription, no upload. Just speed.
 | Platform | File | Notes |
 |---|---|---|
 | Windows 10/11 (x64) | `Trimly_x.y.z_x64-setup.exe` | ffmpeg is included |
-| macOS 11+ (Apple Silicon) | `Trimly_x.y.z_aarch64.dmg` | needs ffmpeg: `brew install ffmpeg` |
+| macOS 11+ (Apple Silicon) | `Trimly_x.y.z_aarch64.dmg` | ffmpeg is included |
 | Linux (x64, ARM64) | `.deb`, `.rpm` or `.AppImage` | needs ffmpeg from your package manager (the `.deb` installs it) |
 
 All files are on the [releases page](https://github.com/Florian11111/Trimly/releases).
@@ -179,8 +179,9 @@ The installer is in `frontend/src-tauri/target/release/bundle/nsis/`.
 <summary><b>macOS</b></summary>
 
 ```bash
-brew install ffmpeg node rust
-cd frontend && npm ci && npm run desktop:build
+brew install node rust nasm pkgconf meson ninja x264 lame mpg123
+cd frontend/src-tauri && bash scripts/build-ffmpeg.sh   # once: builds the bundled ffmpeg
+cd .. && npm ci && npm run desktop:build
 ```
 
 The `.app` and `.dmg` are in `frontend/src-tauri/target/release/bundle/`.
@@ -231,6 +232,6 @@ the small layer in `frontend/src/platform/`.
 
 Trimly is licensed under the [GNU General Public License v3.0 or later](LICENSE).
 
-The Windows build ships ffmpeg compiled with libx264 (GPL); its source is at
+The Windows and macOS builds ship ffmpeg compiled with libx264 (GPL); its source is at
 [ffmpeg.org](https://ffmpeg.org/releases/), the build script is in
 `frontend/src-tauri/scripts/build-ffmpeg.sh`.

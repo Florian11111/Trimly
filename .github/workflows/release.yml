@@ -47,7 +47,7 @@ jobs:
           ## Download
 
           - **Windows:** \`Trimly_…_x64-setup.exe\` (or the \`.msi\`). ffmpeg is included.
-          - **macOS (Apple Silicon):** \`Trimly_…_aarch64.dmg\`. Needs ffmpeg: \`brew install ffmpeg\`.
+          - **macOS 11+ (Apple Silicon):** \`Trimly_…_aarch64.dmg\`. ffmpeg is included.
           - **Linux:** \`Trimly_…_amd64.deb\` (Debian, Ubuntu; installs ffmpeg as a dependency), \`.rpm\` (Fedora; \`sudo dnf install ffmpeg\`) or \`.AppImage\` (any distribution; needs ffmpeg from your package manager). ARM64 builds are marked \`aarch64\`/\`arm64\`.
 
           ## Unsigned builds
@@ -58,9 +58,9 @@ jobs:
           - **macOS:** right-click Trimly in Applications → **Open** → **Open**. On macOS 15 or newer, try to open it once, then click **Open Anyway** in **System Settings → Privacy & Security**.
             Alternative: \`xattr -dr com.apple.quarantine /Applications/Trimly.app\`
 
-          ## License of the bundled ffmpeg (Windows)
+          ## License of the bundled ffmpeg (Windows and macOS)
 
-          The Windows installer ships a minimal static build of [FFmpeg](https://ffmpeg.org) $FFMPEG with libx264, licensed under the **GPL v3**. Trimly runs it as a separate program.
+          The Windows and macOS installers ship a minimal static build of [FFmpeg](https://ffmpeg.org) $FFMPEG with libx264, licensed under the **GPL v3**. Trimly runs it as a separate program.
 
           - FFmpeg source code: https://ffmpeg.org/releases/ffmpeg-$FFMPEG.tar.xz
           - Build script with all configure options: [build-ffmpeg.sh]($SCRIPT_URL)
@@ -110,10 +110,10 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev patchelf file \
             gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
 
-      # --- Mitgeliefertes ffmpeg (nur Windows) ---------------------------------
+      # --- Mitgeliefertes ffmpeg (Windows und macOS) ---------------------------
       # Der Build dauert lange, darum gecacht; neu gebaut wird nur, wenn sich das Skript ändert.
       - name: Cache bundled ffmpeg
-        if: runner.os == 'Windows'
+        if: runner.os != 'Linux'
         id: ffmpeg-cache
         uses: actions/cache@v6
         with:
@@ -147,14 +147,28 @@ jobs:
         working-directory: frontend/src-tauri
         run: bash scripts/build-ffmpeg.sh
 
+      # macOS: statische Bibliotheken von Homebrew, dav1d baut das Skript selbst
+      - name: Build bundled ffmpeg (macOS)
+        if: runner.os == 'macOS' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: bash
+        working-directory: frontend/src-tauri
+        run: |
+          brew install nasm pkgconf meson ninja x264 lame mpg123
+          bash scripts/build-ffmpeg.sh
+
       - name: Check bundled ffmpeg
-        if: runner.os == 'Windows'
+        if: runner.os != 'Linux'
         shell: bash
         working-directory: frontend/src-tauri/binaries
         run: |
           ls -lh
-          ./ffmpeg-x86_64-pc-windows-msvc.exe -hide_banner -version | head -n 1
-          ./ffprobe-x86_64-pc-windows-msvc.exe -hide_banner -version | head -n 1
+          for tool in ffmpeg-* ffprobe-*; do ./"$tool" -hide_banner -version | head -n 1; done
+          # macOS: darf nur Systembibliotheken brauchen, sonst läuft es ohne Homebrew nicht
+          if [ "$RUNNER_OS" = macOS ]; then
+            if otool -L ffmpeg-* ffprobe-* | tail -n +2 | grep -v -e '^[^[:space:]]' -e /usr/lib/ -e /System/; then
+              echo "::error::ffmpeg hängt von Bibliotheken außerhalb des Systems ab"; exit 1
+            fi
+          fi
 
       # --- Werkzeuge ------------------------------------------------------------
       - uses: actions/setup-node@v7

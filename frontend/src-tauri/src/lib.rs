@@ -5,7 +5,7 @@ mod media_server;
 use ffmpeg::{ExportRequest, VideoInfo};
 use media_server::MediaServer;
 use serde::Serialize;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -16,7 +16,8 @@ use tauri::ipc::Channel;
 use tauri::{Emitter, Manager, State};
 
 #[cfg(target_os = "macos")]
-const MISSING_FFMPEG: &str = "ffmpeg wasn't found. Install it in Terminal with: brew install ffmpeg";
+const MISSING_FFMPEG: &str =
+    "ffmpeg wasn't found. Reinstall Trimly or install ffmpeg in Terminal with: brew install ffmpeg";
 #[cfg(windows)]
 const MISSING_FFMPEG: &str =
     "ffmpeg wasn't found. Reinstall Trimly or install ffmpeg in a command prompt with: winget install ffmpeg";
@@ -201,9 +202,30 @@ fn probe_file(path: &str) -> Result<VideoInfo, String> {
         .output()
         .map_err(|e| format!("ffprobe couldn't start: {e}"))?;
     if !out.status.success() {
-        return Err("Trimly can't read this file. Is it a video?".to_string());
+        return Err(ffmpeg::unreadable_file_message(path));
     }
-    ffmpeg::parse_probe(&String::from_utf8_lossy(&out.stdout))
+    let json = String::from_utf8_lossy(&out.stdout);
+    let info = ffmpeg::parse_probe(&json)?;
+    // Schon beim Öffnen sagen, wenn das (schlanke, mitgelieferte) ffmpeg den Codec nicht kann,
+    // statt erst beim Export mit einer ffmpeg-Fehlermeldung abzubrechen
+    if let Some(codecs) = decodable_codecs() {
+        ffmpeg::check_decodable(&json, codecs)?;
+    }
+    Ok(info)
+}
+
+/// Codecs, die das gefundene ffmpeg dekodieren kann. None: Liste nicht lesbar, dann wird nicht geprüft.
+fn decodable_codecs() -> Option<&'static HashSet<String>> {
+    static CODECS: OnceLock<Option<HashSet<String>>> = OnceLock::new();
+    CODECS
+        .get_or_init(|| {
+            let ffmpeg = tools().ffmpeg.as_ref()?;
+            let out = tool_command(ffmpeg).args(["-hide_banner", "-codecs"]).output().ok()?;
+            out.status
+                .success()
+                .then(|| ffmpeg::parse_decodable_codecs(&String::from_utf8_lossy(&out.stdout)))
+        })
+        .as_ref()
 }
 
 #[tauri::command]

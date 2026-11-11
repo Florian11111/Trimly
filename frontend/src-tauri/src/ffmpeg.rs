@@ -240,6 +240,76 @@ fn str_num<T: std::str::FromStr>(v: Option<&serde_json::Value>) -> Option<T> {
     v.and_then(|v| v.as_str()).and_then(|s| s.parse().ok())
 }
 
+/// Endungen, die Trimly öffnen soll (wie `fileAssociations` in tauri.conf.json)
+const KNOWN_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "mkv", "webm", "avi"];
+
+/// Meldung, wenn ffprobe die Datei gar nicht lesen kann.
+pub fn unreadable_file_message(path: &str) -> String {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if ext.is_empty() || KNOWN_EXTENSIONS.contains(&ext.as_str()) {
+        "Trimly can't read this file. It may be damaged or not a video.".into()
+    } else {
+        format!("Trimly can't open .{ext} files. Use MP4, MOV, MKV, WebM or AVI.")
+    }
+}
+
+/// Codec-Namen mit Dekodier-Unterstützung aus `ffmpeg -codecs`.
+/// Zeilen wie ` DEV.LS h264   H.264 / AVC …`; das erste Zeichen ist 'D', wenn ffmpeg dekodieren kann.
+pub fn parse_decodable_codecs(listing: &str) -> std::collections::HashSet<String> {
+    listing
+        .lines()
+        .skip_while(|l| !l.trim_start().starts_with("---"))
+        .skip(1)
+        .filter_map(|l| {
+            let mut parts = l.split_whitespace();
+            let flags = parts.next()?;
+            let name = parts.next()?;
+            (flags.len() == 6 && flags.starts_with('D')).then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Name für die Fehlermeldung: ffprobe-Langname mit Kurzname, z. B. „Windows Media Video 9 (wmv3)“
+fn codec_label(stream: &serde_json::Value) -> String {
+    let name = stream["codec_name"].as_str().unwrap_or("unknown");
+    match stream["codec_long_name"].as_str() {
+        Some(long) if !long.is_empty() => format!("{long} ({name})"),
+        _ => name.to_string(),
+    }
+}
+
+/// Prüft, ob ffmpeg Bild und Ton dieser Datei dekodieren kann. Err mit einer Meldung für die Oberfläche.
+pub fn check_decodable(json: &str, decodable: &std::collections::HashSet<String>) -> Result<(), String> {
+    let v: serde_json::Value = serde_json::from_str(json).map_err(|_| "ffprobe returned an unreadable answer.".to_string())?;
+    let streams = v["streams"].as_array().cloned().unwrap_or_default();
+    let supported = |s: &serde_json::Value| s["codec_name"].as_str().is_some_and(|c| decodable.contains(c));
+
+    if let Some(video) = streams
+        .iter()
+        .find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1)
+    {
+        if !supported(video) {
+            return Err(format!(
+                "Trimly can't decode this video's format: {}. Convert it to MP4 (H.264) first, e.g. with HandBrake.",
+                codec_label(video)
+            ));
+        }
+    }
+    // Ton: build_args übernimmt alle Tonspuren (-map 0:a?), also alle prüfen
+    if let Some(audio) = streams.iter().find(|s| s["codec_type"] == "audio" && !supported(s)) {
+        if !supported(audio) {
+            return Err(format!(
+                "Trimly can't decode this video's sound format: {}. Convert it to MP4 (AAC) first, e.g. with HandBrake.",
+                codec_label(audio)
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Wertet `ffprobe -print_format json -show_format -show_streams` aus.
 pub fn parse_probe(json: &str) -> Result<VideoInfo, String> {
     let v: serde_json::Value =
@@ -757,5 +827,57 @@ mod tests {
         assert_eq!(progress_from_line("progress=continue", 2.5), None);
         assert_eq!(progress_from_line("out_time_us=N/A", 2.5), None);
         assert_eq!(progress_from_line("frame=10", 2.5), None);
+    }
+
+    const CODECS_LISTING: &str = "Codecs:
+ D..... = Decoding supported
+ .E.... = Encoding supported
+ -------
+ DEV.LS h264                 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (decoders: h264 h264_videotoolbox)
+ .EV.L. ffv1                 FFmpeg video codec #1
+ DEAIL. aac                  AAC (Advanced Audio Coding)
+ ..A.L. dts                  placeholder
+";
+
+    #[test]
+    fn decodable_codecs_come_from_the_d_flag() {
+        let set = parse_decodable_codecs(CODECS_LISTING);
+        assert!(set.contains("h264") && set.contains("aac"));
+        assert!(!set.contains("ffv1") && !set.contains("dts"));
+        // Legende vor „-------“ zählt nicht
+        assert!(!set.contains("="));
+    }
+
+    fn probe_json(video: &str, audio: &str) -> String {
+        format!(
+            r#"{{"streams":[
+                {{"codec_type":"video","codec_name":"{video}","codec_long_name":"Long {video}","disposition":{{"attached_pic":0}}}},
+                {{"codec_type":"audio","codec_name":"aac"}},
+                {{"codec_type":"audio","codec_name":"{audio}","codec_long_name":"Long {audio}"}}
+            ],"format":{{"duration":"1"}}}}"#
+        )
+    }
+
+    #[test]
+    fn unsupported_codecs_are_named_in_the_error() {
+        let set = parse_decodable_codecs(CODECS_LISTING);
+        assert_eq!(check_decodable(&probe_json("h264", "aac"), &set), Ok(()));
+
+        let err = check_decodable(&probe_json("ffv1", "aac"), &set).unwrap_err();
+        assert!(err.contains("video's format: Long ffv1 (ffv1)"), "{err}");
+
+        // auch eine zweite Tonspur wird geprüft (Export übernimmt alle)
+        let err = check_decodable(&probe_json("h264", "dts"), &set).unwrap_err();
+        assert!(err.contains("sound format: Long dts (dts)"), "{err}");
+    }
+
+    #[test]
+    fn unreadable_files_get_a_hint_about_the_extension() {
+        assert!(unreadable_file_message("/a/clip.mp4").contains("damaged"));
+        assert!(unreadable_file_message("/a/clip.MOV").contains("damaged"));
+        assert_eq!(
+            unreadable_file_message("/a/clip.wmv"),
+            "Trimly can't open .wmv files. Use MP4, MOV, MKV, WebM or AVI."
+        );
     }
 }
