@@ -161,6 +161,26 @@
   width: 100%;
 }
 
+.ed-speed-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.ed-speed-custom input {
+  width: 3.6em;
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .ed-btn:hover:not(:disabled) {
   filter: brightness(0.92);
 }

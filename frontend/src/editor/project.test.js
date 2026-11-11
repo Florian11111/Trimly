@@ -116,6 +116,17 @@ test('dragging a fast segment edge moves the source by dt times speed', () => {
   expect(P.dragPatch('video', 'end', seg, -1, { clipDuration: 10 })).toEqual({ srcEnd: 4 });
 });
 
+test('custom speed input is parsed, rounded and clamped', () => {
+  expect(P.parseSpeed('1.25')).toBe(1.25);
+  expect(P.parseSpeed('0,8')).toBe(0.8);
+  expect(P.parseSpeed('3×')).toBe(3);
+  expect(P.parseSpeed('1.333')).toBe(1.33);
+  expect(P.parseSpeed('10')).toBe(4);
+  expect(P.parseSpeed('0.1')).toBe(0.25);
+  expect(P.parseSpeed('abc')).toBeNull();
+  expect(P.parseSpeed('0')).toBeNull();
+});
+
 test('render project sends the speed of video and audio', () => {
   const p = P.updateItem(base(), 'video', base().videoSegs[0].id, { speed: 0.5 });
   const { body } = P.buildRenderProject(P.updateItem(p, 'video', p.videoSegs[0].id, { speed: 0.5 }),

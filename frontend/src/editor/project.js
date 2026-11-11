@@ -30,6 +30,15 @@ export const croppedSize = (width, height, crop) =>
 
 // Wählbares Tempo; ffmpeg rendert es mit setpts (Bild) und atempo (Ton, Tonhöhe bleibt)
 export const SPEEDS = [0.25, 0.5, 1, 1.5, 2, 4];
+// Grenzen müssen zu MIN_SPEED/MAX_SPEED in edit.rs und EditRenderer.scala passen
+export const MIN_SPEED = 0.25;
+export const MAX_SPEED = 4;
+// Eigenes Tempo aus einer Eingabe: auf 0,01 gerundet und in die Grenzen geklemmt, ungültig → null
+export const parseSpeed = (text) => {
+  const v = parseFloat(String(text).replace(",", ".").replace(/[x×]\s*$/i, ""));
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(v * 100) / 100));
+};
 export const speedOf = (s) => (s.speed > 0 ? s.speed : 1);
 // Dauer eines Abschnitts auf der Timeline
 export const segLen = (s) => (s.srcEnd - s.srcStart) / speedOf(s);

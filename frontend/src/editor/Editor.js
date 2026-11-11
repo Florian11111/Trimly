@@ -23,6 +23,31 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const isTyping = (e) =>
   ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && !["range", "checkbox"].includes(e.target.type);
 
+// Freies Tempo (0,25–4): übernimmt bei Enter oder beim Verlassen, Escape verwirft
+function SpeedInput({ value, onChange }) {
+  const [draft, setDraft] = useState(null);
+  const apply = () => {
+    const v = P.parseSpeed(draft);
+    if (v !== null && v !== value) onChange(v);
+    setDraft(null);
+  };
+  return (
+    <label className="ed-speed-custom">
+      <input type="text" inputMode="decimal" aria-label="Custom speed"
+        title={`Custom speed (${P.MIN_SPEED}–${P.MAX_SPEED}×)`}
+        value={draft ?? String(value)}
+        onFocus={(e) => { setDraft(String(value)); e.target.select(); }}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={apply}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.target.blur();
+          if (e.key === "Escape") { setDraft(null); e.target.blur(); }
+        }} />
+      ×
+    </label>
+  );
+}
+
 // platform: in der Desktop-App rendert Rust lokal (Clip-„ID“ = Dateipfad, kein Upload),
 // im Web geht alles über das Backend (`api`).
 export default function Editor({ api, platform, settings, mainClip, ensureMainOriginal, active, formatFileSize }) {
@@ -744,6 +769,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
           {v}×
         </button>
       ))}
+      <SpeedInput value={P.speedOf(s)} onChange={(v) => updateSelected({ speed: v })} />
     </div>
   );
 
