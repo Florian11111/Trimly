@@ -1,0 +1,86 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Rückgängig/Wiederholen für einen Zustand aus mehreren Werten.
+ * Änderungen werden erst nach `delay` ms Ruhe ein Schritt, damit ein Griff-Zug
+ * nicht hunderte Einträge erzeugt. `apply(snapshot)` setzt alle Werte zurück.
+ * `rebase(next)`: `next` (Objekt oder Funktion des aktuellen Stands) wird neuer Ausgangspunkt,
+ * der Verlauf beginnt neu (neues Video, Metadaten geladen).
+ */
+export function useUndo(state, apply, delay = 500) {
+  const committed = useRef(state);
+  const current = useRef(state);
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
+  const applying = useRef(false);
+  const timer = useRef(null);
+  const [, setVersion] = useState(0);
+  const bump = () => setVersion((v) => v + 1);
+  current.current = state;
+
+  const key = JSON.stringify(state);
+  useEffect(() => {
+    clearTimeout(timer.current);
+    if (applying.current) {
+      applying.current = false;
+      bump();
+      return undefined;
+    }
+    bump(); // „Rückgängig“ wird sofort möglich, auch vor Ablauf der Wartezeit
+    timer.current = setTimeout(() => {
+      if (same(current.current, committed.current)) return;
+      undoStack.current.push(committed.current);
+      if (undoStack.current.length > 100) undoStack.current.shift();
+      redoStack.current = [];
+      committed.current = current.current;
+      bump();
+    }, delay);
+    return () => clearTimeout(timer.current);
+  }, [key, delay]);
+
+  const go = useCallback(
+    (target) => {
+      clearTimeout(timer.current);
+      applying.current = true;
+      committed.current = target;
+      apply(target);
+      bump();
+    },
+    [apply]
+  );
+
+  const undo = useCallback(() => {
+    if (!same(current.current, committed.current)) {
+      // noch nicht gespeicherte Änderung: zurück zum letzten Stand
+      redoStack.current.push(current.current);
+      go(committed.current);
+    } else if (undoStack.current.length) {
+      redoStack.current.push(committed.current);
+      go(undoStack.current.pop());
+    }
+  }, [go]);
+
+  const redo = useCallback(() => {
+    if (!redoStack.current.length) return;
+    undoStack.current.push(current.current);
+    go(redoStack.current.pop());
+  }, [go]);
+
+  const rebase = useCallback((next) => {
+    clearTimeout(timer.current);
+    undoStack.current = [];
+    redoStack.current = [];
+    committed.current = typeof next === "function" ? next(current.current) : next;
+    bump();
+  }, []);
+
+  return {
+    undo,
+    redo,
+    rebase,
+    canUndo: undoStack.current.length > 0 || !same(state, committed.current),
+    canRedo: redoStack.current.length > 0,
+  };
+}

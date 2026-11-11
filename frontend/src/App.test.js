@@ -125,6 +125,46 @@ test("shows upload progress while the original is sent", async () => {
   expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 });
 
+test("Ctrl+Z and the undo button take back settings, Ctrl+Y redoes them", async () => {
+  await renderWithVideo();
+  const undo = screen.getByRole("button", { name: "Undo" });
+  const redo = screen.getByRole("button", { name: "Redo" });
+  expect(undo).toBeDisabled();
+
+  fireEvent.click(screen.getByLabelText("No sound"));
+  expect(undo).toBeEnabled();
+  fireEvent.keyDown(window, { code: "KeyZ", ctrlKey: true });
+  expect(screen.getByLabelText("With sound")).toBeChecked();
+  expect(redo).toBeEnabled();
+
+  fireEvent.keyDown(window, { code: "KeyY", ctrlKey: true });
+  expect(screen.getByLabelText("No sound")).toBeChecked();
+
+  fireEvent.click(undo);
+  expect(screen.getByLabelText("With sound")).toBeChecked();
+});
+
+test("several changes are undone one after another", async () => {
+  jest.useFakeTimers();
+  try {
+    await renderWithVideo();
+    fireEvent.click(screen.getByLabelText("Target size"));
+    act(() => jest.advanceTimersByTime(600));
+    fireEvent.click(screen.getByLabelText("10 MB"));
+    act(() => jest.advanceTimersByTime(600));
+
+    fireEvent.keyDown(window, { code: "KeyZ", ctrlKey: true });
+    expect(screen.getByLabelText("25 MB")).toBeChecked();
+    fireEvent.keyDown(window, { code: "KeyZ", ctrlKey: true });
+    expect(screen.getByLabelText("Compress")).toBeChecked();
+    // Strg+Umschalt+Z wiederholt
+    fireEvent.keyDown(window, { code: "KeyZ", ctrlKey: true, shiftKey: true });
+    expect(screen.getByRole("radio", { name: "Target size" })).toBeChecked();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
 test("custom quality reveals resolution, frame rate and bitrate", async () => {
   await renderWithVideo();
   fireEvent.click(screen.getByLabelText(/Custom/));

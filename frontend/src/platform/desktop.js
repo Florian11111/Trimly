@@ -142,6 +142,7 @@ export function createDesktopPlatform() {
                 codec: settings?.codec || "h264",
                 encoder: settings?.encoder || "auto",
                 maxBytes: job.maxBytes ?? null,
+                crop: job.crop ?? null,
               },
               onProgress: progressChannel(onProgress),
             })

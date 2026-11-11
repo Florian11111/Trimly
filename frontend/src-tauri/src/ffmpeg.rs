@@ -275,6 +275,35 @@ pub struct ExportRequest {
     /// Zielgröße in Bytes (Modus „Target size“): größere Ergebnisse werden mit weniger Bitrate neu kodiert
     #[serde(default)]
     pub max_bytes: Option<u64>,
+    /// Freier Zuschnitt relativ zum Bild (0..1); width/height meinen dann die Größe nach dem Zuschnitt
+    #[serde(default)]
+    pub crop: Option<Crop>,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct Crop {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl Crop {
+    /// ffmpeg-Filter mit geraden Kanten, unabhängig von der Quellauflösung
+    pub fn filter(&self) -> String {
+        format!(
+            "crop=trunc(iw*{w}/2)*2:trunc(ih*{h}/2)*2:trunc(iw*{x}):trunc(ih*{y})",
+            w = num(self.w),
+            h = num(self.h),
+            x = num(self.x),
+            y = num(self.y)
+        )
+    }
+
+    fn valid(&self) -> bool {
+        let ok = |v: f64| (0.0..=1.0).contains(&v);
+        ok(self.x) && ok(self.y) && self.w > 0.01 && self.h > 0.01 && self.x + self.w <= 1.001 && self.y + self.h <= 1.001
+    }
 }
 
 /// Neue Videobitrate, wenn eine Datei `actual` Bytes statt höchstens `max` hat. Hardware-Encoder wie AMF
@@ -325,6 +354,14 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
     if req.input == req.output {
         return Err("The export can't overwrite the original. Choose another file name.".into());
     }
+    if let Some(c) = &req.crop {
+        if !c.valid() {
+            return Err("The crop area is invalid.".into());
+        }
+        if req.copy && req.streams != "audio" {
+            return Err("Cropping needs re-encoding. Choose Compress or Target size.".into());
+        }
+    }
 
     let mut a: Vec<String> = ["-hide_banner", "-nostats", "-y", "-progress", "pipe:1"]
         .iter()
@@ -360,8 +397,15 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
         push(&["-avoid_negative_ts", "make_zero"]);
     } else {
         let bitrate = req.bitrate.ok_or("The bitrate for encoding is missing.")?;
+        let mut vf: Vec<String> = Vec::new();
+        if let Some(c) = &req.crop {
+            vf.push(c.filter());
+        }
         if let (Some(w), Some(h)) = (req.width, req.height) {
-            push(&["-vf", &format!("scale={w}:{h}")]);
+            vf.push(format!("scale={w}:{h}"));
+        }
+        if !vf.is_empty() {
+            push(&["-vf", &vf.join(",")]);
         }
         if let Some(fps) = req.fps.filter(|f| *f > 0.0) {
             push(&["-fpsmax", &num(fps)]);
@@ -424,7 +468,20 @@ mod tests {
             codec: "h264".into(),
             encoder: "auto".into(),
             max_bytes: None,
+            crop: None,
         }
+    }
+
+    #[test]
+    fn crop_comes_before_scale_and_needs_encoding() {
+        let crop = Some(Crop { x: 0.25, y: 0.0, w: 0.5, h: 1.0 });
+        let req = ExportRequest { crop, width: Some(540), height: Some(720), ..request() };
+        let s = joined(&build_args(&req, HW).unwrap());
+        assert!(s.contains("-vf crop=trunc(iw*0.5/2)*2:trunc(ih*1/2)*2:trunc(iw*0.25):trunc(ih*0),scale=540:720"), "{s}");
+        let copy = ExportRequest { crop, copy: true, ..request() };
+        assert!(build_args(&copy, HW).unwrap_err().contains("re-encoding"));
+        let bad = ExportRequest { crop: Some(Crop { x: 0.8, y: 0.0, w: 0.5, h: 1.0 }), ..request() };
+        assert!(build_args(&bad, HW).is_err());
     }
 
     #[test]

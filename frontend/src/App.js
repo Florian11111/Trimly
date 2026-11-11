@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import CropOverlay from "./components/CropOverlay";
 import Settings from "./components/Settings";
 import Timeline from "./components/Timeline";
 import Editor from "./editor/Editor";
@@ -17,6 +18,7 @@ import {
   sourceVideoKbps,
 } from "./lib/presets";
 import { useSettings } from "./lib/settings";
+import { useUndo } from "./lib/useUndo";
 import { isDesktop, loadPlatform } from "./platform";
 import { API } from "./platform/web";
 
@@ -40,6 +42,9 @@ export default function App() {
   const [quality, setQuality] = useState(DEFAULT_QUALITY); // { mode, presetId, custom, sizeMb }
   const [volume, setVolume] = useState(1);
   const [output, setOutput] = useState("both"); // both | video | audio
+  // Freier Zuschnitt {x, y, w, h} relativ zum Bild (0..1), null = ganzes Bild; nur Desktop
+  const [crop, setCrop] = useState(null);
+  const [cropEditing, setCropEditing] = useState(false);
 
   const [job, setJob] = useState(null); // { state: running|done|error, progress, result, message }
   const [dragging, setDragging] = useState(false);
@@ -56,6 +61,17 @@ export default function App() {
   rangeRef.current = range;
   const videoOpenRef = useRef(false);
   videoOpenRef.current = !!video;
+
+  // Rückgängig / Wiederholen für Ausschnitt und Export-Einstellungen
+  const applySnapshot = useCallback((s) => {
+    setRange(s.range);
+    setQuality(s.quality);
+    setVolume(s.volume);
+    setOutput(s.output);
+    setCrop(s.crop);
+  }, []);
+  const history = useUndo({ range, quality, volume, output, crop }, applySnapshot);
+  const { rebase } = history;
 
   // ─── Plattform laden ────────────────────────────────────────────────────
 
@@ -97,8 +113,11 @@ export default function App() {
     setTab("trim");
     setEditorOpened(false);
     setOriginalId(null);
+    setCrop(null);
+    setCropEditing(false);
+    rebase({ range: [0, 0], quality: DEFAULT_QUALITY, volume: 1, output: "both", crop: null });
     if (inputRef.current) inputRef.current.value = "";
-  }, []);
+  }, [rebase]);
 
   const openVideo = useCallback(
     async (source) => {
@@ -199,6 +218,8 @@ export default function App() {
       height: info?.height || v.videoHeight,
     });
     setRange([0, duration]);
+    // Der volle Ausschnitt ist der Ausgangspunkt, nicht ein Schritt zum Rückgängigmachen
+    rebase((s) => ({ ...s, range: [0, duration] }));
   };
 
   const onResize = () => {
@@ -263,9 +284,30 @@ export default function App() {
     setRange(([s]) => [s, Math.max(videoRef.current?.currentTime ?? 0, s + MIN_CLIP)]);
   }, []);
 
+  // Strg+Z / Strg+Y / Strg+Umschalt+Z (Cmd auf dem Mac). In Textfeldern bleibt das eigene Rückgängig.
+  const { undo, redo } = history;
+  useEffect(() => {
+    if (!video || tab !== "trim") return undefined;
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const t = e.target;
+      if (t.closest?.("textarea, select, .modal") || (t.tagName === "INPUT" && !["range", "radio", "checkbox"].includes(t.type))) return;
+      if (e.code === "KeyZ" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (e.code === "KeyY" || (e.code === "KeyZ" && e.shiftKey)) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [video, tab, undo, redo]);
+
   useEffect(() => {
     if (!meta || tab !== "trim") return undefined;
     const onKey = (e) => {
+      if (e.ctrlKey || e.metaKey) return; // Kürzel wie Strg+Z gehören dem Verlauf
       if (e.target.closest?.("input, select, textarea, [role=slider], .settings, .modal")) return;
       const v = videoRef.current;
       if (!v) return;
@@ -296,6 +338,10 @@ export default function App() {
         case "KeyO":
         case "KeyE":
           setOut();
+          break;
+        case "Escape":
+        case "Enter":
+          setCropEditing(false); // Zuschnitt fertig
           break;
         default:
       }
@@ -344,7 +390,15 @@ export default function App() {
     [meta, video]
   );
   const clipLength = Math.max(0, range[1] - range[0]);
-  const target = source ? resolveQuality(quality, source, clipLength, output, codec) : null;
+  // Zugeschnitten rechnen Auflösung und Zielgröße mit dem Ausschnitt statt mit dem ganzen Bild
+  const cropped = useMemo(
+    () =>
+      source && crop
+        ? { ...source, width: Math.round(source.width * crop.w), height: Math.round(source.height * crop.h) }
+        : source,
+    [source, crop]
+  );
+  const target = cropped ? resolveQuality(quality, cropped, clipLength, output, codec) : null;
   const estimate = source ? estimateBytes(target, clipLength, source, output) : 0;
   const hasAudio = video?.ref?.info ? video.ref.info.hasAudio : true;
 
@@ -356,12 +410,33 @@ export default function App() {
   // Geänderte Einstellungen machen ein altes Ergebnis ungültig
   useEffect(() => {
     setJob((j) => (j?.state === "done" ? null : j));
-  }, [quality, volume, range, output, settings.codec, settings.encoder]);
+  }, [quality, volume, range, output, crop, settings.codec, settings.encoder]);
+
+  // Crop ein/aus. „Original“ kopiert nur und kann nicht zuschneiden, darum dann Compress.
+  const toggleCrop = () => {
+    if (cropEditing) {
+      setCropEditing(false);
+      return;
+    }
+    if (!crop) setCrop({ x: 0, y: 0, w: 1, h: 1 });
+    if (quality.mode === "original") setQ({ mode: "compress" });
+    videoRef.current?.pause();
+    setCropEditing(true);
+  };
+  const resetCrop = () => {
+    setCrop(null);
+    setCropEditing(false);
+  };
+  // Ein Rahmen über das ganze Bild ist kein Zuschnitt
+  const cropActive = !!crop && !(crop.x < 0.001 && crop.y < 0.001 && crop.w > 0.999 && crop.h > 0.999);
 
   // Video ohne Tonspur: nur Video exportieren
   useEffect(() => {
-    if (!hasAudio) setOutput("video");
-  }, [hasAudio]);
+    if (!hasAudio) {
+      setOutput("video");
+      rebase((s) => ({ ...s, output: "video" }));
+    }
+  }, [hasAudio, rebase]);
 
   const runExport = async ({ askLocation = false } = {}) => {
     if (!platform || !video || !target) return;
@@ -375,6 +450,7 @@ export default function App() {
           volume,
           target,
           output,
+          crop: desktop && cropActive && !target.copy ? crop : null,
           // Zielgröße hart einhalten (Desktop kodiert nach, wenn der Encoder darüber liegt)
           maxBytes:
             quality.mode === "size" && output !== "audio" && Number(quality.sizeMb) > 0
@@ -520,6 +596,16 @@ export default function App() {
                 playsInline
                 preload="auto"
               />
+              {desktop && meta && (
+                <CropOverlay
+                  crop={crop}
+                  editing={cropEditing}
+                  aspect={meta.width / meta.height}
+                  sourceSize={source}
+                  videoRef={videoRef}
+                  onChange={setCrop}
+                />
+              )}
             </div>
 
             <div className="transport">
@@ -534,6 +620,45 @@ export default function App() {
               <span className="time">
                 {formatTime(current)}
                 <span className="time-total"> / {formatTime(meta?.duration)}</span>
+              </span>
+              {desktop && (
+                <span className="crop-buttons">
+                  <button
+                    className={`btn btn-icon btn-quiet ${cropEditing ? "is-active" : ""}`}
+                    onClick={toggleCrop}
+                    disabled={!meta || running}
+                    aria-label="Crop"
+                    aria-pressed={cropEditing}
+                    title={cropEditing ? "Done cropping (Enter)" : "Crop to any size"}
+                  >
+                    <CropIcon />
+                  </button>
+                  {crop && (
+                    <button className="btn btn-quiet btn-small" onClick={resetCrop} disabled={running}>
+                      Reset crop
+                    </button>
+                  )}
+                </span>
+              )}
+              <span className="history-buttons">
+                <button
+                  className="btn btn-icon btn-quiet"
+                  onClick={history.undo}
+                  disabled={!history.canUndo || running}
+                  aria-label="Undo"
+                  title={`Undo (${IS_MAC ? "⌘" : "Ctrl+"}Z)`}
+                >
+                  <UndoIcon />
+                </button>
+                <button
+                  className="btn btn-icon btn-quiet"
+                  onClick={history.redo}
+                  disabled={!history.canRedo || running}
+                  aria-label="Redo"
+                  title={`Redo (${IS_MAC ? "⌘⇧Z" : "Ctrl+Y"})`}
+                >
+                  <UndoIcon redo />
+                </button>
               </span>
               <span className="marks">
                 <button className="mark" onClick={setIn} disabled={!meta} title="Set start to playhead (I)">
@@ -572,13 +697,18 @@ export default function App() {
               <legend>Quality</legend>
               <div className="segmented" role="radiogroup" aria-label="Quality mode">
                 {MODES.map((m) => (
-                  <label key={m.id} className={`segment ${quality.mode === m.id ? "is-active" : ""}`} title={m.hint}>
+                  <label
+                    key={m.id}
+                    className={`segment ${quality.mode === m.id ? "is-active" : ""}`}
+                    title={m.id === "original" && cropActive ? "Cropping needs re-encoding. Reset the crop to cut only." : m.hint}
+                  >
                     <input
                       type="radio"
                       name="mode"
                       value={m.id}
                       checked={quality.mode === m.id}
                       onChange={() => setQ({ mode: m.id })}
+                      disabled={m.id === "original" && cropActive}
                     />
                     <span>{m.label}</span>
                   </label>
@@ -930,6 +1060,19 @@ const PlayIcon = () => (
 const PauseIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
     <path d="M3.5 2.5h3v11h-3zM9.5 2.5h3v11h-3z" fill="currentColor" />
+  </svg>
+);
+
+const CropIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M7 3v14h14M3 7h14v14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
+
+// Bogenpfeil nach links (Rückgängig), gespiegelt für Wiederholen
+const UndoIcon = ({ redo }) => (
+  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" style={redo ? { transform: "scaleX(-1)" } : undefined}>
+    <path d="M9 14l-4-4 4-4M5 10h11a4 4 0 1 1 0 8h-1" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
 

@@ -252,6 +252,7 @@
 }
 
 .screen {
+  position: relative;
   flex: 1;
   display: grid;
   place-items: center;
@@ -270,6 +271,79 @@
   max-height: calc(100vh - 300px);
   object-fit: contain;
   cursor: pointer;
+}
+
+/* ─── Zuschneiden (freies Format) ─────────────────────────────────────── */
+
+.crop-layer {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none; /* außerhalb des Bearbeitens startet ein Klick weiter die Wiedergabe */
+}
+
+.crop-layer.is-editing {
+  pointer-events: auto;
+}
+
+.crop-box {
+  position: absolute;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+  outline: 1px solid rgba(255, 255, 255, 0.55);
+  touch-action: none;
+}
+
+.is-editing .crop-box {
+  outline: 2px solid var(--trim);
+  cursor: move;
+}
+
+/* Drittel-Raster als Orientierung */
+.crop-grid {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to right, transparent 33.2%, rgba(255, 255, 255, 0.35) 33.3%, transparent 33.5%, transparent 66.5%, rgba(255, 255, 255, 0.35) 66.6%, transparent 66.8%),
+    linear-gradient(to bottom, transparent 33.2%, rgba(255, 255, 255, 0.35) 33.3%, transparent 33.5%, transparent 66.5%, rgba(255, 255, 255, 0.35) 66.6%, transparent 66.8%);
+  pointer-events: none;
+}
+
+.crop-size {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: var(--radius-s);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.crop-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 3px;
+  background: var(--trim);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+.crop-nw { left: 0; top: 0; cursor: nwse-resize; }
+.crop-n { left: 50%; top: 0; cursor: ns-resize; }
+.crop-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.crop-e { left: 100%; top: 50%; cursor: ew-resize; }
+.crop-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.crop-s { left: 50%; top: 100%; cursor: ns-resize; }
+.crop-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.crop-w { left: 0; top: 50%; cursor: ew-resize; }
+
+.btn-icon.is-active {
+  background: rgba(var(--accent-rgb), 0.2);
+  border-color: rgba(var(--accent-rgb), 0.7);
 }
 
 .transport {
@@ -291,6 +365,33 @@
   display: flex;
   gap: 4px;
   margin-left: auto;
+}
+
+.crop-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.crop-buttons .btn-icon {
+  width: 30px;
+  height: 30px;
+}
+
+/* Rückgängig / Wiederholen, rechts vor Start/End */
+.history-buttons {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.history-buttons + .marks {
+  margin-left: 4px;
+}
+
+.history-buttons .btn-icon {
+  width: 30px;
+  height: 30px;
 }
 
 .mark {
