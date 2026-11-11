@@ -21,3 +21,9 @@ test("file name helpers", () => {
   expect(fileStem(".hidden")).toBe(".hidden");
   expect(fileExtension("noext")).toBe("");
 });
+
+test("exact sizes get two decimals", () => {
+  expect(formatBytes(2726297, { exact: true })).toBe("2.60 MB");
+  expect(formatBytes(2726297)).toBe("2.6 MB");
+  expect(formatBytes(512, { exact: true })).toBe("512 B");
+});

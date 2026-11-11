@@ -99,6 +99,64 @@
   color-scheme: light;
 }
 
+/* ─── Editor: eigenes Farbthema (Petrol/Türkis), damit klar ist, dass es ein anderer Modus ist.
+   Bei grünem Akzent wäre Türkis zu ähnlich, dort Bernstein. ───────────────────────────── */
+.app.is-editing {
+  --violet: #14b8a6;
+  --blue: #3b82f6;
+  --accent-rgb: 20, 184, 166;
+  --accent-soft: #7ee0d2;
+  --trim: #a7f3e4;
+  --trim-rgb: 167, 243, 228;
+  --trim-ink: #06302a;
+  --warm: #f5b942;
+}
+
+:root:not([data-theme="light"]) .app.is-editing {
+  --canvas: #061519;
+  --backdrop-top: #0b2c33;
+  --panel: rgba(12, 38, 44, 0.55);
+  --popover: rgba(10, 32, 38, 0.97);
+  --topbar: rgba(6, 21, 25, 0.5);
+  --sticky: rgba(6, 21, 25, 0.85);
+  --shade: rgba(6, 21, 25, 0.72);
+  --muted: #9cc4c6;
+  background: var(--canvas);
+}
+
+:root[data-accent="green"] .app.is-editing {
+  --violet: #f59e0b;
+  --blue: #ef6c3a;
+  --accent-rgb: 245, 158, 11;
+  --accent-soft: #fcd38a;
+  --trim: #fde3a7;
+  --trim-rgb: 253, 227, 167;
+  --trim-ink: #3d2600;
+  --warm: #38bdf8;
+}
+
+:root[data-accent="green"]:not([data-theme="light"]) .app.is-editing {
+  --canvas: #140f07;
+  --backdrop-top: #2e2210;
+  --panel: rgba(44, 32, 14, 0.55);
+  --popover: rgba(38, 28, 12, 0.97);
+  --topbar: rgba(20, 15, 7, 0.5);
+  --sticky: rgba(20, 15, 7, 0.85);
+  --shade: rgba(20, 15, 7, 0.72);
+  --muted: #c9bc9c;
+}
+
+/* Hell: Klammer und Akzent wie im hellen Grunddesign aus der Akzentfarbe ableiten */
+:root[data-theme="light"] .app.is-editing {
+  --canvas: #ebf5f4;
+  --backdrop-top: #d3ecea;
+  --trim: var(--violet);
+  --trim-rgb: var(--accent-rgb);
+  --trim-ink: #ffffff;
+  --accent-soft: var(--violet);
+  background: var(--canvas);
+}
+
 * {
   box-sizing: border-box;
 }

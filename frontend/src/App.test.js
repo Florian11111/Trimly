@@ -223,7 +223,7 @@ function mockServer() {
 async function calculate() {
   fireEvent.click(screen.getByRole("button", { name: "More export options" }));
   fireEvent.click(screen.getByRole("menuitem", { name: /Calculate exact size/ }));
-  await screen.findByText(/Calculated\./, {}, { timeout: 3000 });
+  await screen.findByText(/^exactly /, {}, { timeout: 3000 });
 }
 
 test("calculating shows the exact size and a later export downloads without encoding again", async () => {
@@ -232,7 +232,7 @@ test("calculating shows the exact size and a later export downloads without enco
   const click = jest.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
 
   await calculate();
-  expect(screen.getByText("exactly 1.2 MB")).toBeInTheDocument();
+  expect(screen.getByText("exactly 1.18 MB")).toBeInTheDocument();
   expect(click).not.toHaveBeenCalled();
 
   fireEvent.click(screen.getByRole("button", { name: "Export and download" }));
@@ -247,7 +247,7 @@ test("changing a setting discards a calculated result", async () => {
   mockServer();
   await calculate();
   fireEvent.click(screen.getByLabelText(/High/));
-  expect(screen.queryByText(/Calculated\./)).not.toBeInTheDocument();
+  expect(screen.queryByText(/^exactly /)).not.toBeInTheDocument();
   expect(screen.getByText(/^about /)).toBeInTheDocument();
 });
 
@@ -261,4 +261,24 @@ test("the player has its own volume that doesn't touch the export volume", async
   fireEvent.click(screen.getByRole("button", { name: "Mute player" }));
   expect(document.querySelector("video").muted).toBe(true);
   expect(window.localStorage.getItem("trimly.playerVolume")).toBe("0.3");
+});
+
+test("the home button goes back to the start screen", async () => {
+  await renderWithVideo();
+  fireEvent.click(screen.getByRole("button", { name: "Start screen" }));
+  expect(screen.getByRole("heading", { name: /Drop a video here/ })).toBeInTheDocument();
+  expect(screen.queryByText("clip.mp4")).not.toBeInTheDocument();
+});
+
+test("Ctrl+O opens the file chooser", async () => {
+  await renderReady();
+  const click = jest.spyOn(screen.getByTestId("file-input"), "click").mockImplementation(() => {});
+  fireEvent.keyDown(window, { code: "KeyO", ctrlKey: true });
+  await waitFor(() => expect(click).toHaveBeenCalled());
+});
+
+test("the encoder note sits in the export column", async () => {
+  await renderWithVideo();
+  const note = await screen.findByText("Encoding on the server");
+  expect(note.closest(".panel")).not.toBeNull();
 });

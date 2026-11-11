@@ -58,11 +58,6 @@
   white-space: nowrap;
 }
 
-.file-size {
-  color: var(--muted);
-  flex: none;
-}
-
 /* ─── Knöpfe ───────────────────────────────────────────────────────────── */
 
 .btn {
@@ -144,8 +139,10 @@
   gap: 2px;
   margin-left: auto;
   padding: 3px;
-  border-radius: 8px;
-  background: var(--well);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  /* im Dunklen hell abgesetzt statt schwarz, damit der Umschalter als solcher erkennbar ist */
+  background: var(--raised);
 }
 
 .tabs + .btn {
@@ -163,10 +160,15 @@
   cursor: pointer;
 }
 
-.tab.is-active {
-  background: var(--raised);
+.tab:hover:not(.is-active) {
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.5);
+  background: var(--raised);
+}
+
+.tab.is-active {
+  background: rgba(var(--accent-rgb), 0.28);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.6);
 }
 
 .workspace[hidden],
@@ -411,6 +413,11 @@ kbd {
 }
 
 /* ─── Timeline ─────────────────────────────────────────────────────────── */
+
+/* Die Griffe sitzen 14 px außerhalb der Leiste; so schließt die Klammer bündig mit dem Player ab */
+.timeline {
+  padding: 0 14px;
+}
 
 .timeline-track {
   position: relative;
@@ -809,10 +816,14 @@ input[type="range"] {
   color: var(--danger);
 }
 
+/* immer einzeilig; wird es doch zu eng, kürzt „…“ und der Tooltip zeigt alles */
 .encoder {
   margin: 0;
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ─── Qualität: Modus-Umschalter mit kleinem Unterbereich ─────────────── */
@@ -972,10 +983,6 @@ fieldset:disabled .segment {
 
 .summary-size .is-exact {
   color: var(--accent-soft);
-}
-
-.notice-ready {
-  color: var(--muted);
 }
 
 /* Lautstärke nur für den Player, neben der Zeit */

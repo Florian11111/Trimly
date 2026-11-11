@@ -234,6 +234,11 @@ export function createDesktopPlatform() {
       });
     },
 
+    // macOS-Menü „File › Open New File…“ (⌘O), siehe lib.rs
+    async onMenuOpen(handler) {
+      return listen("menu-open", () => handler());
+    },
+
     log(message) {
       invoke("frontend_log", { message }).catch(() => {});
     },

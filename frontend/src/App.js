@@ -147,9 +147,40 @@ export default function App() {
     else if (picked === null && platform.kind === "web") inputRef.current?.click();
   };
 
-  // „Open another video“: Auswahl öffnen; erst wenn eine Datei gewählt ist, ersetzt sie
-  // das alte Video komplett. Abbrechen lässt alles, wie es war.
-  const replaceVideo = () => chooseFile();
+  // ⌘O / Strg+O und das macOS-Menü: Auswahl öffnen; erst wenn eine Datei gewählt ist, ersetzt
+  // sie das alte Video komplett. Abbrechen lässt alles, wie es war.
+  const chooseFileRef = useRef(chooseFile);
+  chooseFileRef.current = chooseFile;
+  const runningRef = useRef(false);
+
+  useEffect(() => {
+    if (!platform?.onMenuOpen) return undefined;
+    let unlisten;
+    let alive = true;
+    platform
+      .onMenuOpen(() => !runningRef.current && chooseFileRef.current())
+      .then((fn) => (alive ? (unlisten = fn) : fn()));
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [platform]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      // Auf dem Mac-Desktop fängt das Menü ⌘O ab
+      if (platform?.onMenuOpen && IS_MAC) return;
+      if ((e.ctrlKey || e.metaKey) && e.code === "KeyO" && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        if (!runningRef.current) chooseFileRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [platform]);
+
+  // Home: zurück zum Startbildschirm, das aktuelle Video wird verworfen
+  const goHome = () => resetAll(null);
 
   // Desktop: Datei aus „Öffnen mit“ oder der Kommandozeile (`Trimly video.mp4`)
   useEffect(() => {
@@ -527,6 +558,7 @@ export default function App() {
   // ─── Darstellung ────────────────────────────────────────────────────────
 
   const running = job?.state === "running";
+  runningRef.current = running;
   const uploading = upload !== null && !desktop;
   const quietInputs = running || output === "audio";
   const codecLabel = CODECS.find((c) => c.id === codec)?.label;
@@ -551,7 +583,6 @@ export default function App() {
         {video && (
           <span className="file" data-tauri-drag-region>
             <span className="file-name" title={video.name}>{video.name}</span>
-            <span className="file-size">{formatBytes(video.size)}</span>
           </span>
         )}
         {video && platform && (
@@ -574,8 +605,15 @@ export default function App() {
           </div>
         )}
         {video && (
-          <button className="btn btn-quiet" onClick={replaceVideo} disabled={running}>
-            Open another video
+          <button
+            type="button"
+            className="btn btn-icon btn-quiet home-button"
+            onClick={goHome}
+            disabled={running}
+            aria-label="Start screen"
+            title={`Start screen – open another video (${IS_MAC ? "⌘" : "Ctrl+"}O)`}
+          >
+            <HomeIcon />
           </button>
         )}
         <button
@@ -902,11 +940,11 @@ export default function App() {
               )}
               <p className="summary-size">
                 {job?.state === "computed" ? (
-                  <span className="is-exact">exactly {formatBytes(job.result.size)}</span>
+                  <span className="is-exact">exactly {formatBytes(job.result.size, { exact: true })}</span>
                 ) : (
                   <span>about {formatBytes(estimate)}</span>
                 )}
-                {video && <span className="summary-original">instead of {formatBytes(video.size)}</span>}
+                {video && <span className="summary-original">Original: {formatBytes(video.size)}</span>}
               </p>
             </div>
 
@@ -984,15 +1022,10 @@ export default function App() {
               </div>
             )}
 
-            {job?.state === "computed" && (
-              <p className="notice notice-ready" role="status">
-                Calculated. Export saves it instantly. Changing a setting discards it.
-              </p>
-            )}
             {job?.state === "done" && (
               <div className="notice notice-done" role="status">
                 <p>
-                  <strong>{job.result.savedAs}</strong> is ready, {formatBytes(job.result.size)}.
+                  <strong>{job.result.savedAs}</strong> is ready, {formatBytes(job.result.size, { exact: true })}.
                 </p>
                 {job.result.path && platform?.reveal && (
                   <button className="btn btn-quiet" onClick={() => platform.reveal(job.result.path)}>
@@ -1006,7 +1039,9 @@ export default function App() {
             )}
 
             {encoder && (
-              <p className={`encoder ${encoder.hardware ? "is-hardware" : ""}`}>{encoder.label}</p>
+              <p className={`encoder ${encoder.hardware ? "is-hardware" : ""}`} title={encoder.label}>
+                {encoder.label}
+              </p>
             )}
           </aside>
         </main>
@@ -1164,6 +1199,18 @@ function loadPlayerVolume() {
     return 1;
   }
 }
+
+const HomeIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      d="M4 10.5L12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
 
 const FolderIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
