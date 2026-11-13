@@ -45,7 +45,7 @@ Also: H.264 / HEVC / AV1 · sound only as MP3 · editor with clips, speed, crop,
 | Windows 10/11 | macOS 11+ (Apple Silicon) | Linux |
 |---|---|---|
 | `…_x64-setup.exe` | `…_aarch64.dmg` | `.deb` · `.rpm` · `.AppImage` |
-| ffmpeg included | `brew install ffmpeg` | ffmpeg from package manager |
+| ffmpeg included | ffmpeg included | ffmpeg from package manager |
 
 Not code-signed yet: Windows → *More info → Run anyway*, macOS → right-click → *Open*.
 Right-click any video → *Open with → Trimly*.
@@ -119,8 +119,9 @@ The installer is in `frontend/src-tauri/target/release/bundle/nsis/`, an `.msi` 
 You need [Homebrew](https://brew.sh):
 
 ```bash
-brew install ffmpeg node rust
-cd frontend && npm ci && npm run desktop:build
+brew install node rust nasm pkgconf meson ninja x264 lame mpg123
+cd frontend/src-tauri && bash scripts/build-ffmpeg.sh   # once: builds the bundled ffmpeg
+cd .. && npm ci && npm run desktop:build
 ```
 
 The `.app` and `.dmg` are in `frontend/src-tauri/target/release/bundle/`. macOS uses the ffmpeg from
@@ -173,6 +174,6 @@ or the video is missing, those tests are skipped instead of failing.
 
 Trimly is licensed under the [GNU General Public License v3.0 or later](LICENSE).
 
-The Windows build ships ffmpeg compiled with libx264 (GPL); its source is at
+The Windows and macOS builds ship ffmpeg compiled with libx264 (GPL); its source is at
 [ffmpeg.org](https://ffmpeg.org/releases/), the build script is in
 `frontend/src-tauri/scripts/build-ffmpeg.sh`.
