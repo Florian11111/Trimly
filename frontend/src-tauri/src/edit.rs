@@ -1,14 +1,14 @@
-//! Editor-Export der Desktop-App: Gegenstück zu backend/app/video/EditRenderer.scala.
-//! Reine Logik (Prüfen, ffmpeg-Argumente bauen) ohne Prozesse, damit alles testbar ist.
-//! Das Projekt kommt von `buildRenderProject` im Frontend; `originalId` ist hier der Dateipfad.
+//! Editor export of the desktop app: counterpart of backend/app/video/EditRenderer.scala.
+//! Pure logic (validation, building ffmpeg arguments) without processes, so everything is testable.
+//! The project comes from `buildRenderProject` in the frontend; here `originalId` is the file path.
 
 use crate::ffmpeg::{encoder_args, final_format_filter, hw_init_args, pix_fmt_args, Crop, AUDIO_ONLY_KBPS};
 use serde::Deserialize;
 use std::collections::HashMap;
 
-/// Wie VideoCalculator.AudioBitrateKbps im Backend
+/// Like VideoCalculator.AudioBitrateKbps in the backend
 const AUDIO_KBPS: u32 = 128;
-/// Dauer des weichen Ein-/Auszoomens in Sekunden
+/// Duration of the smooth zoom in/out in seconds
 const ZOOM_RAMP: f64 = 0.3;
 
 #[derive(Deserialize, Debug, Clone)]
@@ -20,14 +20,14 @@ pub struct EditPreset {
     pub bitrate: u32,
 }
 
-/// Videospur: Abschnitte werden nacheinander abgespielt
+/// Video track: segments play one after another
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EditVideoSeg {
     pub original_id: String,
     pub start: f64,
     pub end: f64,
-    /// Abspieltempo, 0.25–4 (fehlt = 1)
+    /// Playback speed, 0.25–4 (missing = 1)
     #[serde(default = "one")]
     pub speed: f64,
 }
@@ -36,11 +36,11 @@ fn one() -> f64 {
     1.0
 }
 
-/// Tempo-Grenzen wie im Editor (`SPEEDS` in project.js)
+/// Speed limits as in the editor (`SPEEDS` in project.js)
 const MIN_SPEED: f64 = 0.25;
 const MAX_SPEED: f64 = 4.0;
 
-/// Tonspur: Abschnitte liegen frei auf der Timeline (at = Startzeit in der Ausgabe)
+/// Audio track: segments are placed freely on the timeline (at = start time in the output)
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EditAudioSeg {
@@ -53,7 +53,7 @@ pub struct EditAudioSeg {
     pub speed: f64,
 }
 
-/// Zoom auf den Bereich x,y (oben links) mit Breite w; Höhe ergibt sich aus dem Seitenverhältnis
+/// Zoom into the area x,y (top left) with width w; the height follows from the aspect ratio
 #[derive(Deserialize, Debug, Clone)]
 pub struct EditZoom {
     pub start: f64,
@@ -63,7 +63,7 @@ pub struct EditZoom {
     pub w: f64,
 }
 
-/// Overlay = transparentes PNG in Ausgabegröße (Pfeile, Text, Bilder zeichnet die Oberfläche)
+/// Overlay = transparent PNG in output size (the UI draws arrows, text and images)
 #[derive(Deserialize, Debug, Clone)]
 pub struct EditOverlay {
     pub file: String,
@@ -81,10 +81,10 @@ pub struct EditProject {
     pub zooms: Vec<EditZoom>,
     #[serde(default)]
     pub overlays: Vec<EditOverlay>,
-    /// "both", "video" (ohne Ton) oder "audio" (nur Ton als MP3)
+    /// "both", "video" (no audio) or "audio" (audio only, as MP3)
     #[serde(default = "default_output")]
     pub output: String,
-    /// Freier Zuschnitt des Ausgabebildes (relativ, 0..1); das Ergebnis wird entsprechend kleiner
+    /// Free crop of the output frame (relative, 0..1); the result gets smaller accordingly
     #[serde(default)]
     pub crop: Option<Crop>,
 }
@@ -94,24 +94,24 @@ fn default_output() -> String {
 }
 
 impl EditProject {
-    /// Länge der Videospur in Sekunden
+    /// Length of the video track in seconds
     pub fn total(&self) -> f64 {
         self.video.iter().map(|s| (s.end - s.start) / s.speed).sum()
     }
 
-    /// Länge der Tonspur (Ende des letzten Ton-Abschnitts)
+    /// Length of the audio track (end of the last audio segment)
     pub fn audio_total(&self) -> f64 {
         self.audio.iter().map(|s| s.at + (s.end - s.start) / s.speed).fold(0.0, f64::max)
     }
 }
 
-/// Zahlen ohne Exponentialschreibweise, höchstens 4 Nachkommastellen
+/// Numbers without exponent notation, at most 4 decimals
 fn num(v: f64) -> String {
     let s = format!("{v:.4}");
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// Prüft das Projekt; `overlay_files` ordnet Overlay-Namen ihren PNG-Dateien zu.
+/// Validates the project; `overlay_files` maps overlay names to their PNG files.
 pub fn validate(p: &EditProject, overlay_files: &HashMap<String, String>) -> Result<(), String> {
     let err = |m: &str| Err(m.to_string());
     if p.video.is_empty() {
@@ -150,7 +150,7 @@ pub fn validate(p: &EditProject, overlay_files: &HashMap<String, String>) -> Res
     Ok(())
 }
 
-/// Sammelt Eingänge und Filter für einen ffmpeg-Aufruf.
+/// Collects inputs and filters for one ffmpeg call.
 #[derive(Default)]
 struct Graph {
     inputs: Vec<String>,
@@ -166,7 +166,7 @@ impl Graph {
     }
 }
 
-/// Ton-Eingänge und Mix [aout] hinzufügen; false, wenn kein Abschnitt Ton hat.
+/// Adds the audio inputs and the mix [aout]; false if no segment has audio.
 fn add_audio(p: &EditProject, total: f64, has_audio: &dyn Fn(&str) -> bool, g: &mut Graph) -> bool {
     let segs: Vec<&EditAudioSeg> =
         p.audio.iter().filter(|s| s.at < total && has_audio(&s.original_id)).collect();
@@ -192,7 +192,7 @@ fn add_audio(p: &EditProject, total: f64, has_audio: &dyn Fn(&str) -> bool, g: &
     true
 }
 
-/// Ton-Tempo als atempo-Kette (je Glied 0.5–2), z. B. 4 → ",atempo=2,atempo=2"; Tempo 1 → leer
+/// Audio speed as an atempo chain (each link 0.5–2), e.g. 4 → ",atempo=2,atempo=2"; speed 1 → empty
 fn atempo(speed: f64) -> String {
     if (speed - 1.0).abs() < 1e-6 {
         return String::new();
@@ -218,8 +218,8 @@ fn head() -> Vec<String> {
         .collect()
 }
 
-/// ffmpeg-Argumente für den Video-Export (ohne Programmnamen).
-/// `source_fps`: höchste Bildrate der Quellen (0 = unbekannt), `has_audio`: hat die Datei eine Tonspur?
+/// ffmpeg arguments for the video export (without the program name).
+/// `source_fps`: highest frame rate of the sources (0 = unknown), `has_audio`: does the file have an audio track?
 pub fn build_video_args(
     p: &EditProject,
     overlay_files: &HashMap<String, String>,
@@ -230,12 +230,12 @@ pub fn build_video_args(
 ) -> Vec<String> {
     let w = p.preset.width - p.preset.width % 2;
     let h = p.preset.height - p.preset.height % 2;
-    // Nicht mehr fps als die schnellste Quelle, sonst nur doppelte Bilder
+    // No more fps than the fastest source, otherwise only duplicated frames
     let fps = if source_fps > 0.0 { p.preset.fps.min(source_fps) } else { p.preset.fps };
     let total = p.total();
     let mut g = Graph::default();
 
-    // Videospur: jeder Abschnitt einzeln (schnelles Suchen per -ss vor -i), auf Ausgabegröße, aneinanderhängen
+    // Video track: each segment on its own (fast seek with -ss before -i), scaled to the output size, concatenated
     let mut labels = String::new();
     for (i, seg) in p.video.iter().enumerate() {
         let idx = g.input(&["-ss", &num(seg.start), "-t", &num(seg.end - seg.start), "-i", &seg.original_id]);
@@ -249,7 +249,7 @@ pub fn build_video_args(
     g.filters.push(format!("{labels}concat=n={}:v=1:a=0[vcat]", p.video.len()));
     let mut current = "[vcat]".to_string();
 
-    // Zoom: Faktor und Bildmitte als Funktion der Zeit, mit weicher Rampe
+    // Zoom: factor and centre as a function of time, with a smooth ramp
     if !p.zooms.is_empty() {
         let ramps: Vec<String> = p
             .zooms
@@ -273,7 +273,7 @@ pub fn build_video_args(
         current = "[vzoom]".into();
     }
 
-    // Overlays nach dem Zoom, damit Pfeile und Text dort bleiben, wo sie gezeichnet wurden
+    // Overlays after the zoom, so arrows and text stay where they were drawn
     for (i, o) in p.overlays.iter().enumerate() {
         let idx = g.input(&["-loop", "1", "-i", &overlay_files[&o.file]]);
         g.filters.push(format!("[{idx}:v:0]scale={w}:{h},format=rgba[ov{i}]"));
@@ -284,7 +284,7 @@ pub fn build_video_args(
         ));
         current = format!("[vo{i}]");
     }
-    // Zuschnitt zuletzt, damit Zoom und Overlays im Ausschnitt so liegen wie in der Vorschau
+    // Crop last, so zoom and overlays sit inside the crop just like in the preview
     let crop = p.crop.map(|c| format!("{},", c.filter())).unwrap_or_default();
     g.filters.push(format!("{current}{crop}{}[vout]", final_format_filter(encoder)));
 
@@ -307,7 +307,7 @@ pub fn build_video_args(
     a
 }
 
-/// Nur Ton: die ganze Tonspur (auch hinter dem Videoende) als MP3. None, wenn das Projekt keinen Ton hat.
+/// Audio only: the whole audio track (including after the video ends) as MP3. None if the project has no audio.
 pub fn build_audio_args(p: &EditProject, has_audio: &dyn Fn(&str) -> bool, out: &str) -> Option<Vec<String>> {
     let total = p.audio_total();
     let mut g = Graph::default();
@@ -366,7 +366,7 @@ mod tests {
         let args = build_video_args(&project(), &files(), 30.0, &|_| true, "libx264", "out.mp4");
         let s = args.join(" ");
         let graph = &args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1];
-        // ungerade Breite wird gerade, fps auf die Quelle gedeckelt
+        // an odd width becomes even, fps capped to the source
         assert!(graph.contains("scale=1280:720:force_original_aspect_ratio=decrease"), "{graph}");
         assert!(graph.contains("fps=30,"), "{graph}");
         assert!(graph.contains("[v0][v1]concat=n=2:v=1:a=0[vcat]"), "{graph}");
@@ -403,8 +403,8 @@ mod tests {
     #[test]
     fn speed_shortens_the_timeline_and_changes_tempo() {
         let mut p = project();
-        p.video[0].speed = 2.0; // 2 s Quelle → 1 s
-        p.audio[0].speed = 4.0; // 2 s Quelle → 0,5 s
+        p.video[0].speed = 2.0; // 2 s of source → 1 s
+        p.audio[0].speed = 4.0; // 2 s of source → 0.5 s
         assert_eq!(p.total(), 3.5);
         assert!(validate(&p, &files()).is_ok());
         let graph = build_video_args(&p, &files(), 30.0, &|_| true, "libx264", "o.mp4").join(" ");

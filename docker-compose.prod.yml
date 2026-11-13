@@ -30,5 +30,5 @@ services:
       - APPLICATION_SECRET=${APPLICATION_SECRET}
     restart: unless-stopped
 
-# Starten mit:
+# Start with:
 # APPLICATION_SECRET=$(openssl rand -base64 32) docker compose -f docker-compose.prod.yml up --build

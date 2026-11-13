@@ -1,24 +1,24 @@
-# Verwende ein Node.js-Image
+# Node.js image
 FROM node:latest
 
 RUN apt-get update && apt-get install -y neovim && rm -rf /var/lib/apt/lists/*
 
-# Setze das Arbeitsverzeichnis
+# Working directory
 WORKDIR /app
 
-# Kopiere package.json und package-lock.json
+# Copy package.json and package-lock.json
 COPY package*.json ./
 
-# Installiere Abhängigkeiten
+# Install dependencies
 RUN npm install
 
-# Kopiere den Rest des Codes
+# Copy the rest of the code
 COPY . .
 
-# Exponiere den Port für die Entwicklungsumgebung
+# Port of the dev server
 EXPOSE 3000
 
-# Starte die Anwendung im Entwicklungsmodus
+# Start the app in development mode
 CMD ["npm", "start"]
 
 # comment to build and run container

@@ -1,6 +1,6 @@
-# Baut die Desktop-App (Tauri 2) für Windows, macOS und Linux, lädt alles in einen
-# Entwurfs-Release und veröffentlicht ihn, wenn alle Builds geklappt haben.
-# Auslöser: ein Tag wie v0.2.0. Ablauf siehe CLAUDE.md, Abschnitt „Release“.
+# Builds the desktop app (Tauri 2) for Windows, macOS and Linux, uploads everything to a
+# draft release and publishes it once all builds have succeeded.
+# Trigger: a tag like v0.2.0. Steps: see CLAUDE.md, section "Release".
 name: Release
 
 on:
@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Legt den Entwurf einmal an; beide Build-Jobs laden in denselben hoch
-  # (sonst können sie gleichzeitig je einen eigenen Entwurf anlegen).
+  # Creates the draft once; all build jobs upload to the same one
+  # (otherwise they could each create their own draft at the same time).
   create-release:
     runs-on: ubuntu-latest
     outputs:
@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Tag und Version müssen zusammenpassen, sonst heißen die Installer anders als der Release
+      # Tag and version must match, otherwise the installers are named differently from the release
       - name: Check version
         shell: bash
         run: |
@@ -33,14 +33,14 @@ jobs:
           CARGO=$(sed -n 's/^version = "\(.*\)"$/\1/p' frontend/src-tauri/Cargo.toml | head -n 1)
           echo "Tag $GITHUB_REF_NAME, package.json $VERSION, Cargo.toml $CARGO"
           if [ "v$VERSION" != "$GITHUB_REF_NAME" ] || [ "$VERSION" != "$CARGO" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME passt nicht zu package.json ($VERSION) / Cargo.toml ($CARGO)"
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json ($VERSION) / Cargo.toml ($CARGO)"
             exit 1
           fi
 
       - name: Write release notes
         shell: bash
         run: |
-          # ffmpeg-Version für den GPL-Hinweis
+          # ffmpeg version for the GPL notice
           FFMPEG=$(sed -n 's/^FFMPEG_VERSION="\${FFMPEG_VERSION:-\(.*\)}"$/\1/p' frontend/src-tauri/scripts/build-ffmpeg.sh)
           SCRIPT_URL="https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/frontend/src-tauri/scripts/build-ffmpeg.sh"
           cat > "$RUNNER_TEMP/notes.md" <<EOF
@@ -54,7 +54,7 @@ jobs:
 
           These installers are not code-signed, so your system will warn you once:
 
-          - **Windows (SmartScreen):** click **More info → Run anyway** („Weitere Informationen → Trotzdem ausführen“).
+          - **Windows (SmartScreen):** click **More info → Run anyway**.
           - **macOS:** right-click Trimly in Applications → **Open** → **Open**. On macOS 15 or newer, try to open it once, then click **Open Anyway** in **System Settings → Privacy & Security**.
             Alternative: \`xattr -dr com.apple.quarantine /Applications/Trimly.app\`
 
@@ -91,7 +91,7 @@ jobs:
             platform: windows-latest
           - name: macOS (Apple Silicon)
             platform: macos-latest
-          # 22.04: ältere glibc, damit .deb und AppImage auch auf älteren Distributionen laufen
+          # 22.04: older glibc, so .deb and AppImage also run on older distributions
           - name: Linux (x64)
             platform: ubuntu-22.04
           - name: Linux (ARM64)
@@ -101,7 +101,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # --- Linux: WebKitGTK und GStreamer (Vorschau-Player) --------------------
+      # --- Linux: WebKitGTK and GStreamer (preview player) ---------------------
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -110,8 +110,8 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev patchelf file \
             gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
 
-      # --- Mitgeliefertes ffmpeg (Windows und macOS) ---------------------------
-      # Der Build dauert lange, darum gecacht; neu gebaut wird nur, wenn sich das Skript ändert.
+      # --- Bundled ffmpeg (Windows and macOS) -----------------------------------
+      # The build takes long, so it is cached; it is only rebuilt when the script changes.
       - name: Cache bundled ffmpeg
         if: runner.os != 'Linux'
         id: ffmpeg-cache
@@ -126,7 +126,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          # wie im Kopf von scripts/build-ffmpeg.sh
+          # as in the header of scripts/build-ffmpeg.sh
           install: >-
             make
             diffutils
@@ -147,7 +147,7 @@ jobs:
         working-directory: frontend/src-tauri
         run: bash scripts/build-ffmpeg.sh
 
-      # macOS: statische Bibliotheken von Homebrew, dav1d baut das Skript selbst
+      # macOS: static libraries from Homebrew, the script builds dav1d itself
       - name: Build bundled ffmpeg (macOS)
         if: runner.os == 'macOS' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
         shell: bash
@@ -163,10 +163,10 @@ jobs:
         run: |
           ls -lh
           for tool in ffmpeg-* ffprobe-*; do ./"$tool" -hide_banner -version | head -n 1; done
-          # macOS: darf nur Systembibliotheken brauchen, sonst läuft es ohne Homebrew nicht
+          # macOS: may only need system libraries, otherwise it won't run without Homebrew
           if [ "$RUNNER_OS" = macOS ]; then
             if otool -L ffmpeg-* ffprobe-* | tail -n +2 | grep -v -e '^[^[:space:]]' -e /usr/lib/ -e /System/; then
-              echo "::error::ffmpeg hängt von Bibliotheken außerhalb des Systems ab"; exit 1
+              echo "::error::ffmpeg depends on libraries outside the system"; exit 1
             fi
           fi
 
@@ -187,23 +187,23 @@ jobs:
         working-directory: frontend
         run: npm ci
 
-      # --- Bauen und hochladen --------------------------------------------------
+      # --- Build and upload -----------------------------------------------------
       - name: Build and upload to draft release
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # GitHub setzt CI=true, dann bricht Create React App schon bei ESLint-Warnungen ab
+          # GitHub sets CI=true, which makes Create React App fail on ESLint warnings
           CI: false
-          # macOS: ad-hoc signieren (kein Apple-Zertifikat). Ganz ohne Signatur meldet
-          # macOS auf Apple Silicon „beschädigt“ statt nur „nicht verifizierter Entwickler“.
+          # macOS: ad-hoc signing (no Apple certificate). Without any signature, macOS on
+          # Apple Silicon reports "damaged" instead of just "unidentified developer".
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
         with:
           projectPath: frontend
           releaseId: ${{ needs.create-release.outputs.id }}
 
-  # Erst wenn alle Builds grün sind, wird der Entwurf veröffentlicht.
-  # Schlägt einer fehl, bleibt es beim Entwurf (siehe CLAUDE.md, „Release“).
-  # Tags mit Bindestrich (v0.3.0-beta.1) werden als Vorabversion veröffentlicht.
+  # The draft is only published once all builds are green.
+  # If one fails, it stays a draft (see CLAUDE.md, "Release").
+  # Tags with a hyphen (v0.3.0-beta.1) are published as a pre-release.
   publish:
     needs: [create-release, build]
     runs-on: ubuntu-latest

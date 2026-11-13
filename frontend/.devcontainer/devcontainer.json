@@ -1,7 +1,7 @@
 {
   "name": "Node.js Frontend Dev Container",
   "build": {
-    "dockerfile": "../Dockerfile",   // Wenn dein Dockerfile im übergeordneten Verzeichnis liegt
+    "dockerfile": "../Dockerfile",   // Dockerfile in the parent folder
     "context": ".."
   },
   "settings": {

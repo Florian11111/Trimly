@@ -1,6 +1,6 @@
 :root {
-  /* Nachtblau mit GlasflÃ¤chen; Akzent-Verlauf (--violet â†’ --blue) fÃ¼r Aktionen, helle Akzentfarbe
-     (--trim) fÃ¼r den Schnitt. Theme und Akzent schaltet lib/settings.js Ã¼ber data-Attribute an <html>. */
+  /* Night blue with glass surfaces; accent gradient (--violet → --blue) for actions, light accent colour
+     (--trim) for the trim. lib/settings.js switches theme and accent via data attributes on <html>. */
   --canvas: #08091a;
   --panel: rgba(20, 22, 48, 0.55);
   --raised: rgba(255, 255, 255, 0.07);
@@ -11,9 +11,9 @@
   --success: #8fe0b0;
   --glass-blur: blur(22px) saturate(140%);
 
-  /* FlÃ¤chen, die im dunklen Design schwarz getÃ¶nt sind */
+  /* Surfaces tinted black in the dark theme */
   --topbar: rgba(8, 9, 26, 0.5);
-  /* MenÃ¼s und Dialoge: fast deckend, Glas wirkt in der Kopfzeile nicht doppelt */
+  /* Menus and dialogs: almost opaque, glass doesn't stack nicely in the header */
   --popover: rgba(18, 20, 44, 0.97);
   --well: rgba(0, 0, 0, 0.3);
   --well-strong: rgba(0, 0, 0, 0.55);
@@ -23,7 +23,7 @@
   --backdrop-top: #14153a;
   --glow-opacity: 1;
 
-  /* Akzent (Standard: Violett) */
+  /* Accent (default: violet) */
   --violet: #8a5cff;
   --blue: #3f7bff;
   --accent-rgb: 138, 92, 255;
@@ -73,7 +73,7 @@
   --warm: #e6c13c;
 }
 
-/* Helles Design: FlÃ¤chen hell, Schrift dunkel; Klammer krÃ¤ftiger, damit sie auf WeiÃŸ sichtbar bleibt */
+/* Light theme: light surfaces, dark text; stronger bracket so it stays visible on white */
 :root[data-theme="light"] {
   --canvas: #eef0f8;
   --panel: rgba(255, 255, 255, 0.7);
@@ -99,8 +99,8 @@
   color-scheme: light;
 }
 
-/* ─── Editor: eigenes Farbthema (Petrol/Türkis), damit klar ist, dass es ein anderer Modus ist.
-   Bei grünem Akzent wäre Türkis zu ähnlich, dort Bernstein. ───────────────────────────── */
+/* ─── Editor: its own colour theme (teal), so it's clear it is a different mode.
+   With the green accent teal would be too similar, so amber there. ─────────────────────────── */
 .app.is-editing {
   --violet: #14b8a6;
   --blue: #3b82f6;
@@ -146,7 +146,7 @@
   --muted: #c9bc9c;
 }
 
-/* Hell: Klammer und Akzent wie im hellen Grunddesign aus der Akzentfarbe ableiten */
+/* Light: derive bracket and accent from the accent colour as in the light base theme */
 :root[data-theme="light"] .app.is-editing {
   --canvas: #ebf5f4;
   --backdrop-top: #d3ecea;
@@ -190,7 +190,7 @@ select {
   outline-offset: 2px;
 }
 
-/* â”€â”€â”€ Bewegter Hintergrund â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* ─── Moving background ──────────────────────────────────────────────── */
 
 .backdrop {
   position: fixed;
@@ -202,9 +202,9 @@ select {
   opacity: var(--glow-opacity);
 }
 
-/* Ãœberwiegend dunkel, wenige weiche Lichtinseln. Jede zieht eine geschlossene Bahn
-   (Endpunkt = Startpunkt, daher kein Stillstand am Umkehrpunkt) und â€žatmetâ€œ zusÃ¤tzlich
-   in der Helligkeit. Beim Start blenden sie nacheinander ein (bloom). --o = Grundhelligkeit. */
+/* Mostly dark, a few soft islands of light. Each follows a closed path
+   (end point = start point, so no standstill at a turning point) and also "breathes"
+   in brightness. On start they fade in one after another (bloom). --o = base brightness. */
 .backdrop span {
   position: absolute;
   border-radius: 50%;
@@ -233,7 +233,7 @@ select {
   animation: drift-b 31s ease-in-out infinite, breathe 11s 2s ease-in-out infinite, bloom 2.4s 0.3s ease-out backwards;
 }
 
-/* Kleiner, etwas hellerer Akzent */
+/* Small, slightly lighter accent */
 .backdrop span:nth-child(3) {
   --o: 0.22;
   bottom: -10vmax;
@@ -245,7 +245,7 @@ select {
   animation: drift-c 23s ease-in-out infinite, breathe 8s 1s ease-in-out infinite, bloom 2.4s 0.6s ease-out backwards;
 }
 
-/* Vierter, wandernder Fleck quer Ã¼ber die Mitte */
+/* Fourth spot, wandering across the middle */
 .backdrop span:nth-child(4) {
   --o: 0.16;
   top: 30vmax;
@@ -269,8 +269,8 @@ select {
   }
 }
 
-/* Editor: gleiche Lichter, aber vertauschte Farben und verschobene Lage,
-   damit man sofort sieht, in welchem Tab man ist */
+/* Editor: the same lights, but with swapped colours and shifted positions,
+   so you can see at once which tab you are in */
 .backdrop span {
   transition: background-color 1.2s ease, left 1.6s ease, top 1.6s ease, opacity 1.2s ease;
 }

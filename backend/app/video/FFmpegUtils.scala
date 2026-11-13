@@ -31,12 +31,12 @@ object FFmpegUtils {
       val format = json("format")
       val streams = json("streams").arr
 
-      // Aus Format:
+      // From the format:
       val duration = format.obj.get("duration").map(_.str)
       val bit_rate = format.obj.get("bit_rate").map(_.str)
       val size = format.obj.get("size").map(_.str)
 
-      // Video-Stream suchen
+      // Find the video stream
       val videoStreamOpt = streams.find { stream =>
         stream.obj.get("codec_type").exists(_.str == "video")
       }
@@ -78,9 +78,9 @@ object FFmpegUtils {
   }
 
 
-  // NVENC verfügbar? Einmal beim ersten Zugriff testen. Der Testlauf wärmt
-  // gleichzeitig CUDA auf (der erste GPU-Job im Container ist sonst ~7s langsamer).
-  // TRIMLY_ENCODER=cpu erzwingt CPU-Encoding.
+  // Is NVENC available? Tested once on first use. The test run also warms up
+  // CUDA (otherwise the first GPU job in the container is ~7 s slower).
+  // TRIMLY_ENCODER=cpu forces CPU encoding.
   lazy val gpuAvailable: Boolean = {
     val forcedCpu = sys.env.get("TRIMLY_ENCODER").exists(_.equalsIgnoreCase("cpu"))
     val available = !forcedCpu && Try {
@@ -100,12 +100,12 @@ object FFmpegUtils {
       "-of", "csv=p=0", path).!!.trim.nonEmpty
   }.getOrElse(false)
 
-  // Bitrate für reine Audio-Exporte (MP3)
+  // Bitrate for audio-only exports (MP3)
   val AudioOnlyBitrateKbps = 192
 
   def run(command: Seq[String]): Either[String, String] = {
-    println(s"ffmpeg befehl: $command")
-    // Letzte stderr-Zeilen merken, damit Fehler im Frontend erklärt werden können
+    println(s"[FFMPEG] Command: $command")
+    // Keep the last stderr lines so errors can be explained in the frontend
     val stderrTail = scala.collection.mutable.Queue.empty[String]
     val result = command.!(ProcessLogger(_ => (), line => {
       stderrTail.enqueue(line)
@@ -119,8 +119,8 @@ object FFmpegUtils {
     }
   }
 
-  // Nur schneiden, Video wird 1:1 kopiert. Sehr schnell, aber der Start
-  // springt auf den vorherigen Keyframe. Audio wird nur bei Lautstärkeänderung neu kodiert.
+  // Trim only, the video is copied 1:1. Very fast, but the start
+  // jumps to the previous keyframe. Audio is only re-encoded when the volume changes.
   def trimVideo(videoConversion: VideoConversion): Either[String, String] = {
     val startSeconds = videoConversion.startTime.getOrElse(0) / 1000.0
     val endSeconds = videoConversion.endTime.getOrElse(0) / 1000.0
@@ -148,13 +148,13 @@ object FFmpegUtils {
     ))
   }
 
-  // Nur die Tonspur des Ausschnitts als MP3
+  // Only the audio of the selection as MP3
   def extractAudio(videoConversion: VideoConversion): Either[String, String] = {
     val startSeconds = videoConversion.startTime.getOrElse(0) / 1000.0
     val endSeconds = videoConversion.endTime.getOrElse(0) / 1000.0
     val volume = videoConversion.volume.getOrElse(1.0)
     if (volume < 0) return Left("Volume must be a non-negative number.")
-    if (!hasAudio(videoConversion.filePath)) return Left("Das Video hat keine Tonspur.")
+    if (!hasAudio(videoConversion.filePath)) return Left("This video has no audio track.")
 
     run(Seq(
       ffmpegPath,
@@ -179,12 +179,12 @@ object FFmpegUtils {
     if (gpuAvailable) {
       processVideoWith(videoConversion, useGpu = true) match {
         case Left(error) =>
-          // z.B. Codec, den NVDEC nicht kann (10-bit, AV1 auf älteren Karten) -> CPU
+          // e.g. a codec NVDEC can't decode (10-bit, AV1 on older cards) -> CPU
           println(s"[FFMPEG] GPU fehlgeschlagen, nutze CPU: $error")
           processVideoWith(videoConversion, useGpu = false)
         case ok if exceedsSizeLimit(videoConversion) =>
-          // NVENC kann sehr niedrige Bitraten nicht erreichen (QP max. 51), libx264 schon
-          println(s"[FFMPEG] GPU-Ergebnis über Größenlimit, kodiere mit CPU neu")
+          // NVENC can't reach very low bitrates (QP max. 51), libx264 can
+          println(s"[FFMPEG] GPU result exceeds the size limit, re-encoding on the CPU")
           processVideoWith(videoConversion, useGpu = false)
         case ok => ok
       }
@@ -209,10 +209,10 @@ object FFmpegUtils {
     val startSeconds = videoConversion.startTime.getOrElse(0) / 1000.0
     val endSeconds = videoConversion.endTime.getOrElse(0) / 1000.0
 
-    // Dynamische Filter: Videoauflösung
+    // Dynamic filters: video resolution
     val resolutionFilter = (videoConversion.width, videoConversion.height) match {
       case (Some(w), Some(h)) =>
-        // Encoder brauchen gerade Abmessungen (z.B. bei Custom-Auflösung)
+        // Encoders need even dimensions (e.g. with a custom resolution)
         val scaler = if (useGpu) "scale_cuda" else "scale"
         Some(s"$scaler=${w - w % 2}:${h - h % 2}")
       case _ =>
@@ -223,13 +223,13 @@ object FFmpegUtils {
     val videoFilters = List(resolutionFilter).flatten
     val vfArgs = if (videoFilters.nonEmpty) Seq("-vf", videoFilters.mkString(",")) else Seq()
 
-    // Framerate und Bitrate-Argumente
+    // Frame rate and bitrate arguments
     val framerateArgs = videoConversion.framerate match {
       case Some(fps) => Seq("-r", fps.toString)
       case None => return Left("Framerate must be specified.")
     }
     val bitrateArgs = videoConversion.bitrate match {
-      // Bei Größenlimit Spitzen begrenzen, damit die Zielgröße eingehalten wird
+      // With a size limit, cap peaks so the target size is met
       case Some(b) if videoConversion.maxSizeMb.isDefined =>
         Seq("-b:v", s"${b}k", "-maxrate", s"${b}k", "-bufsize", s"${b * 2}k")
       case Some(b) => Seq("-b:v", s"${b}k")
@@ -249,9 +249,9 @@ object FFmpegUtils {
         "-b:a", s"${VideoCalculator.AudioBitrateKbps}k"
       )
 
-    // GPU: dekodieren, skalieren und kodieren komplett auf der Grafikkarte.
-    // -bf 0: NVENC mit B-Frames erzeugt in ffmpeg 5.1 bei 29.97-fps-Quellen um ~100s
-    // verschobene Zeitstempel, viele Player zeigen dann nur ein graues Bild.
+    // GPU: decode, scale and encode entirely on the graphics card.
+    // -bf 0: with B-frames, NVENC in ffmpeg 5.1 shifts timestamps by ~100 s for 29.97 fps
+    // sources, and many players then show only a grey picture.
     val hwaccelArgs = if (useGpu) Seq("-hwaccel", "cuda", "-hwaccel_output_format", "cuda") else Seq()
     val encoderArgs =
       if (useGpu) Seq("-c:v", "h264_nvenc", "-preset", "p4", "-bf", "0")

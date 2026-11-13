@@ -1,115 +1,115 @@
 # Trimly
 
-Videos schneiden und verkleinern. Eine React-Oberfläche, zwei Betriebsarten:
+Cut and compress videos. One React UI, two modes of operation:
 
-- **Desktop (Tauri 2, macOS + Windows + Linux):** Rust ruft ffmpeg direkt auf der lokalen Datei auf, mit Hardware-Encoding (VideoToolbox, NVENC, Quick Sync, AMF, unter Linux VA-API).
-- **Web:** Upload an ein Scala/Play-Backend, das ffmpeg im Docker-Container ausführt (optional NVENC über `docker-compose.gpu.yml`, Windows-Start per `start-trimly.bat`).
+- **Desktop (Tauri 2, macOS + Windows + Linux):** Rust runs ffmpeg directly on the local file, with hardware encoding (VideoToolbox, NVENC, Quick Sync, AMF, VA-API on Linux).
+- **Web:** upload to a Scala/Play backend that runs ffmpeg in a Docker container (optionally NVENC via `docker-compose.gpu.yml`, Windows start via `start-trimly.bat`).
 
-Florian nutzt beides: Mac (M5) und Windows-PC mit AMD Radeon RX 9070 XT (AMF, kein NVENC).
+Florian uses both: a Mac (M5) and a Windows PC with an AMD Radeon RX 9070 XT (AMF, no NVENC).
 
-## Aufbau
+## Structure
 
-| Teil | Technik | Ort |
+| Part | Tech | Location |
 |---|---|---|
-| Oberfläche | React 19, Create React App (`react-scripts` 5), reines JS | `frontend/src/` |
-| Desktop | Tauri 2, Rust, Plugins `dialog` und `opener` | `frontend/src-tauri/` |
+| UI | React 19, Create React App (`react-scripts` 5), plain JS | `frontend/src/` |
+| Desktop | Tauri 2, Rust, plugins `dialog` and `opener` | `frontend/src-tauri/` |
 | Backend | Scala 2.13, Play Framework 3.0.7 (Pekko), sbt 1.10 | `backend/` |
-| Video | `ffmpeg` / `ffprobe` als externe Prozesse | |
-| Prod (Web) | nginx vor Frontend (statisch) und Backend | `nginx.conf`, `docker-compose.prod.yml` |
+| Video | `ffmpeg` / `ffprobe` as external processes | |
+| Prod (web) | nginx in front of the frontend (static) and backend | `nginx.conf`, `docker-compose.prod.yml` |
 
 ### Frontend (`frontend/src/`)
 
-- `App.js`: gesamter Zustand. Video öffnen, Wiedergabe (rAF-Abspielkopf, stoppt am Ausschnittende), Tastenkürzel, Export. Qualität als `quality = {mode, presetId, custom, sizeMb}` mit drei nebeneinanderliegenden Modi **Original / Compress / Target size**, jeder klappt darunter seinen kleinen Bereich auf (Compress: Small/Medium/High/Custom, Target size: 10/25/50/100 MB + eigene Zahl). Bewusst nicht mehr als drei Hauptoptionen (Wunsch von Florian: übersichtlich, mehrere Ausschnitte pro Video gehören in den Editor, nicht hierher). Kommt per „Öffnen mit“ eine Datei, während ein Video offen ist, fragt ein Dialog „Open …?“ erst nach.
-- `lib/settings.js` + `components/Settings.js`: Zahnrad-Menü in der Kopfzeile, gespeichert in `localStorage` (`trimly.settings`). Überall: Theme (Dark/Light/System) und Akzentfarbe (violet/blue/pink/green) als `data-theme`/`data-accent` an `<html>`; `public/index.html` setzt beides schon vor dem ersten Bild. Nur Desktop: Format (H.264/HEVC/AV1), Encoder (Automatic / gefundene GPUs / CPU) und Standard-Ausgabeordner. Mit Ordner wird direkt dorthin exportiert (freier Name per `unique_path`), der Ordner-Knopf neben „Export“ fragt trotzdem nach dem Ort.
-- Die ganze App ist auf **Englisch** (Texte, Fehlermeldungen aus Rust, Zahlen mit Punkt). Kommentare bleiben deutsch. Ausnahme: Meldungen des Scala-Backends (nur Web) sind noch deutsch.
-- `components/Timeline.js`: Filmstreifen. Vorschaubilder werden mit einem versteckten `<video>` per Seek direkt in einen Canvas gezeichnet (ohne Auslesen). **Kurzer Klick auf einen Griff springt nur dorthin, erst nach `HOLD_MS` Gedrückthalten wird er verschiebbar** (Wunsch von Florian). Griffe sind `role="slider"` und per Pfeiltasten bedienbar. Mindestlänge 0,01 s.
-- `lib/presets.js`: **einzige Quelle für Qualitätsstufen.** `resolveTarget` rechnet Preset und Quelle in `{copy, width, height, fps, bitrate, audioBitrate, capped}` um: `height` = kürzere Seite, nie hochskalieren, gerade Kanten, **Video- und Tonbitrate nie über dem Original** (sonst wird z. B. eine 100-kbit/s-Vorlesung beim Kodieren größer). `estimateBytes` liefert die Größenschätzung je Ausgabe (`OUTPUTS`: both/video/audio). `resolveQuality` verteilt auf die Modi; `resolveSizeTarget` rechnet MB (MiB, 6 % Puffer) und Cliplänge in Bitrate, wählt die Auflösung über eine Bitraten-Leiter und bläht nie über das Original auf (`tooSmall` warnt). HEVC/AV1 bekommen bei festen Stufen 70 %/60 % der Bitrate (eigene Werte bleiben), die Web-Version kodiert immer H.264. Tonbitraten 128 kbit/s AAC, 192 kbit/s MP3 – müssen zu Backend (`VideoCalculator.AudioBitrateKbps`, `FFmpegUtils.AudioOnlyBitrateKbps`) und `ffmpeg.rs` passen.
-- `platform/`: `index.js` wählt per `"__TAURI_INTERNALS__" in window` zwischen `web.js` (HTTP an das Backend) und `desktop.js` (Tauri `invoke`). `desktop.js` wird nur dynamisch importiert, damit Jest die Tauri-ESM-Pakete nie lädt. Beide Module haben dieselbe Schnittstelle, beschrieben in `index.js`.
-- Design-Tokens in `index.css`: Nachtblau, Glasflächen (`--glass-blur`), Akzent-Verlauf `--violet`→`--blue` für Aktionen, helles Lavendel `--trim` (#c9bfff, vorher Orange) für die Schnittklammer. Theme- und Akzent-Varianten überschreiben nur Tokens (`--well`, `--shade`, `--popover`, `--accent-rgb` …); **keine festen Farben in CSS**, sonst bricht das helle Design. Menüs/Dialoge nutzen `--popover` (fast deckend), weil Glas in der Kopfzeile nicht doppelt wirkt. Achtung: `.app > :not(.backdrop)` setzt `position: relative; z-index: 1` – eigene Ebenen brauchen `.app > .x` (siehe `.topbar`, `.modal-backdrop`). Hintergrund `.backdrop` mit vier weichgezeichneten Farbflecken: blenden beim Start nacheinander ein (`bloom`), ziehen danach geschlossene Bahnen (`drift-*`, 23–37 s) und pulsieren in der Helligkeit (`breathe`, Grundwert `--o`); steht bei „Bewegung reduzieren“. Systemschrift, Zahlen mit `tabular-nums`.
-- Abmessungen kommen auf dem Desktop von ffprobe (`video.ref.info`), nicht vom `<video>`-Element.
-- „Anderes Video“ ruft `resetAll()` auf (alles inkl. Einstellungen zurück). Der Arbeitsbereich hat `key={video.src}`, damit Player und Filmstreifen pro Video neu entstehen.
-- Nach einem Export tritt der Export-Knopf zurück (`.btn-primary.is-done`), bis sich eine Einstellung ändert.
-- `web.js` folgt dem Backend-Protokoll: `mode=original|custom`, `output=both|video|audio`, bei `status: "missing"` Original neu hochladen und erneut senden, `/check` liefert `status` ready/computing/error/unknown, Download per Direktlink mit `?name=` (kein RAM-Puffer).
-- `src/editor/` (Editor-Tab: Clips, Tonspur, Overlays, Zoom, `POST /render`) stammt aus dem Oktober-Stand. Er hängt über den Umschalter „Schneiden / Editor“ in der Kopfzeile an `App.js`, im Web und auf dem Desktop. Auf dem Desktop ist die „originalId“ der Dateipfad (kein Upload, kein Keepalive), Clips kommen über `platform.pick/open`, Export über `platform.renderEdit` → Rust `render_edit` (Overlays als Base64-PNG). Beide Ansichten bleiben beim Umschalten erhalten (`hidden`). Der Editor ist ein eigenes Bundle (`React.lazy`), vorgeladen beim Zeigen auf oder Fokussieren des Tabs; Tests brauchen dafür `findBy…`. Farben in `Editor.css` nutzen die Design-Tokens. `src/presets.js` gehört nur zum Editor.
+- `App.js`: all state. Opening a video, playback (rAF playhead, stops at the end of the selection), keyboard shortcuts, export. Quality as `quality = {mode, presetId, custom, sizeMb}` with three side-by-side modes **Original / Compress / Target size**, each opening its own small panel below (Compress: Small/Medium/High/Custom, Target size: 10/25/50/100 MB + custom number). Deliberately no more than three main options (Florian's wish: keep it simple; several clips per video belong in the editor, not here). If a file arrives via "Open with" while a video is open, an "Open …?" dialog asks first.
+- `lib/settings.js` + `components/Settings.js`: gear menu in the header, stored in `localStorage` (`trimly.settings`). Everywhere: theme (Dark/Light/System) and accent colour (violet/blue/pink/green) as `data-theme`/`data-accent` on `<html>`; `public/index.html` sets both before the first paint. Desktop only: format (H.264/HEVC/AV1), encoder (Automatic / detected GPUs / CPU) and default output folder. With a folder set, exports go straight there (free name via `unique_path`); the folder button next to "Export" still asks for a location.
+- Everything is in **English**: UI texts, error messages (Rust and Scala), comments, numbers with a dot.
+- `components/Timeline.js`: film strip. Thumbnails are drawn straight into a canvas from a hidden `<video>` by seeking (no pixel readback). **A short click on a handle only seeks there; it becomes draggable only after holding for `HOLD_MS`** (Florian's wish). Handles are `role="slider"` and work with the arrow keys. Minimum length 0.01 s.
+- `lib/presets.js`: **single source of quality levels.** `resolveTarget` turns preset and source into `{copy, width, height, fps, bitrate, audioBitrate, capped}`: `height` = shorter side, never upscale, even edges, **video and audio bitrate never above the original** (otherwise e.g. a 100 kbit/s lecture gets bigger when encoded). `estimateBytes` returns the size estimate per output (`OUTPUTS`: both/video/audio). `resolveQuality` dispatches to the modes; `resolveSizeTarget` turns MB (MiB, 6 % buffer) and clip length into a bitrate, picks the resolution via a bitrate ladder and never inflates beyond the original (`tooSmall` warns). HEVC/AV1 get 70 %/60 % of the bitrate for the fixed levels (custom values stay); the web version always encodes H.264. Audio bitrates 128 kbit/s AAC, 192 kbit/s MP3 – must match the backend (`VideoCalculator.AudioBitrateKbps`, `FFmpegUtils.AudioOnlyBitrateKbps`) and `ffmpeg.rs`.
+- `platform/`: `index.js` picks via `"__TAURI_INTERNALS__" in window` between `web.js` (HTTP to the backend) and `desktop.js` (Tauri `invoke`). `desktop.js` is only imported dynamically so Jest never loads the Tauri ESM packages. Both modules share one interface, described in `index.js`.
+- Design tokens in `index.css`: night blue, glass surfaces (`--glass-blur`), accent gradient `--violet`→`--blue` for actions, light lavender `--trim` (#c9bfff, formerly orange) for the trim bracket. Theme and accent variants only override tokens (`--well`, `--shade`, `--popover`, `--accent-rgb` …); **no hard-coded colours in CSS**, or the light theme breaks. Menus/dialogs use `--popover` (almost opaque), because glass doesn't stack well in the header. Careful: `.app > :not(.backdrop)` sets `position: relative; z-index: 1` – own layers need `.app > .x` (see `.topbar`, `.modal-backdrop`). Background `.backdrop` with four blurred colour spots: they fade in one after another on start (`bloom`), then follow closed paths (`drift-*`, 23–37 s) and pulse in brightness (`breathe`, base value `--o`); still with "reduce motion". System font, numbers with `tabular-nums`.
+- On the desktop, dimensions come from ffprobe (`video.ref.info`), not from the `<video>` element.
+- "Other video" calls `resetAll()` (everything including settings is reset). The workspace has `key={video.src}` so player and film strip are recreated per video.
+- After an export the export button steps back (`.btn-primary.is-done`) until a setting changes.
+- `web.js` follows the backend protocol: `mode=original|custom`, `output=both|video|audio`; on `status: "missing"` upload the original again and resend; `/check` returns `status` ready/computing/error/unknown; download via a direct link with `?name=` (no RAM buffer).
+- `src/editor/` (editor tab: clips, audio track, overlays, zoom, `POST /render`) dates from the October version. It hangs off `App.js` via the "Trim / Editor" switch in the header, on the web and on the desktop. On the desktop the "originalId" is the file path (no upload, no keepalive), clips come via `platform.pick/open`, export via `platform.renderEdit` → Rust `render_edit` (overlays as Base64 PNG). Both views are kept when switching (`hidden`). The editor is its own bundle (`React.lazy`), preloaded on hovering or focusing the tab; tests therefore need `findBy…`. Colours in `Editor.css` use the design tokens. `src/presets.js` belongs to the editor only.
 
 ### Desktop (`frontend/src-tauri/src/`)
 
-- `ffmpeg.rs`: reine Logik ohne Prozesse. `find_tool` (zuerst neben der eigenen Programmdatei = mitgeliefertes ffmpeg, dann PATH + Homebrew-Ordner, weil Finder-Apps den Shell-PATH nicht erben; unter Windows `.exe`, winget-Links, `C:\ffmpeg\bin`), Encoder als Familie × Codec (`encoder_for("amf", "av1")` → `av1_amf`; CPU nur `libx264`), `listed_hw_encoders_all` + `encoder_test_args` (jeder Hardware-Encoder wird per Test-Encode mit **640×480** geprüft – ffmpeg listet NVENC auch ohne Karte, und `hevc_amf` lehnt 320×240 ab), `pick_encoder` (Wunsch-Gerät + Codec → sonst andere Hardware mit dem Codec → H.264 → libx264), `encoder_args` (**NVENC immer mit `-bf 0`**, sonst graues Bild bei 29,97 fps; HEVC mit `-tag:v hvc1` für Apple-Player), `parse_probe`, `build_args` (`streams` both/video/audio), `progress_from_line`.
-- `edit.rs`: Editor-Export, Gegenstück zu `EditRenderer.scala` (concat, zoompan, overlay, amix), reine Logik mit Tests; `render_edit` in `lib.rs` prüft Quellen per ffprobe und fällt wie `export_video` von Hardware auf libx264 zurück.
-- `media_server.rs`: Vorschau-Videos laufen über einen eigenen HTTP-Server auf `127.0.0.1` (Zufallsport, Token in der URL, nur per `media_url` freigegebene Dateien). **Nicht zurück zum Tauri-Asset-Protokoll wechseln:** Es beantwortet Ranges mit höchstens 1 MB, und bei langen Videos ist der `moov`-Index größer, dann zeigt WebKit nur 0 × 0 ohne Bild.
-- Mitgeliefertes ffmpeg (Windows und macOS): `scripts/build-ffmpeg.sh` baut ein schlankes, statisches ffmpeg/ffprobe (GPL wegen libx264) nach `binaries/` (nicht im Git): unter Windows in MSYS2 UCRT64 (~18 MB), auf dem Mac mit Homebrew-Werkzeugen (je ~11 MB, App 27 MB, DMG ~14 MB). `tauri.windows.conf.json`/`tauri.macos.conf.json` packen es per `externalBin` neben die Programmdatei. **Ohne diese Dateien schlagen `desktop` und `desktop:build` fehl.** Mac-Besonderheit: ld nimmt immer die `.dylib`, wenn sie neben der `.a` liegt, darum kopiert das Skript die `.a` von x264/lame/mpg123 in einen eigenen Ordner und baut dav1d selbst statisch; Ergebnis darf laut `otool -L` nur `/usr/lib` und `/System` brauchen (prüft auch der Release-Workflow). Homebrew-Libs sind für die aktuelle macOS-Version gebaut (Linker-Warnung „built for newer macOS“); auf macOS 11–14 noch ungetestet. Neue Formate/Filter: Listen im Skript ergänzen (die Filter, die Code in `ffmpeg.rs`/`edit.rs` nutzt, plus `transpose`/`hflip`/`vflip`/`rotate` für das automatische Drehen von Hochkant-Handyvideos). Kann ffmpeg einen Codec nicht dekodieren, meldet `probe` das schon beim Öffnen (`check_decodable` gegen `ffmpeg -codecs`), ffprobe-Fehler bei fremden Endungen per `unreadable_file_message`.
-- `lib.rs`: alle ffmpeg-Aufrufe über `tool_command` (stdin null, unter Windows `CREATE_NO_WINDOW`, sonst blitzt aus der GUI-App bei jedem Aufruf ein Konsolenfenster auf). `encoder_info` ist async: synchrone Commands laufen im Haupt-Thread und hätten das Fenster bis zum Ende des Encoder-Tests eingefroren. Tauri-Commands `encoder_info`, `initial_file`, `frontend_log` (UI-Meldungen nach stderr, nützlich zur Fehlersuche ohne Fenster), `probe`, `media_url`, `export_video` (Fortschritt über `Channel<f64>`; `codec`/`encoder` aus den Einstellungen; scheitert ein Hardware-Encoder, automatisch neuer Versuch mit libx264), `cancel_export`. Speichern im Hintergrund: ohne Standardordner startet `desktop.js` den Export sofort in `temp_output` (Temp-Ordner, Präfix `trimly-export-`), während der Speichern-Dialog offen ist; danach `finalize_export` (umbenennen, über Laufwerke kopieren) oder bei Abbruch `cancel_export` + `discard_temp`. Beide fassen nur eigene Temp-Dateien an. Es läuft höchstens ein Export gleichzeitig. Abbruch liefert den Fehler `"cancelled"`, den das Frontend still schluckt. `TRIMLY_ENCODER=cpu` erzwingt libx264.
-- „Öffnen mit“: `bundle.fileAssociations` (Rolle Viewer, Rang `Alternate` → nie Standardprogramm). Windows übergibt die Datei als Startargument, macOS als `RunEvent::Opened` → wird in `PendingFile` gemerkt und als Event `open-file` gemeldet; die UI holt sie per `initial_file` ab (liefert jede Datei nur einmal). Testen auf dem Mac: `open --stderr log.txt -a …/Trimly.app video.mp4`. Eine Instanz: `tauri-plugin-single-instance` (muss das erste Plugin sein) gibt die Datei eines zweiten Starts per `PendingFile` + `open-file` an das laufende Fenster weiter (unter Windows getestet). Achtung beim Testen: zwei Builds mit derselben `identifier` teilen sich das.
-- Fehlersuche ohne Bildschirmzugriff: `cargo build && ./target/debug/trimly /pfad/video.mp4 2>&1 | grep '\[ui\]'` (Debug-Build lädt die UI von `localhost:3000`).
-- `tauri.conf.json`: macOS-Titelleiste als Overlay (`.is-desktop.is-mac .topbar` lässt 84 px für die Ampel-Knöpfe frei; Windows hat eine normale Titelleiste).
-- **Linux (November 2026 in einer UTM-VM getestet: Ubuntu 24.04 ARM64, libx264; VA-API auf echter Hardware noch ungetestet):** Builds als `.deb`, `.rpm` und AppImage (Release-Workflow, ubuntu-22.04 x64 + ARM64). ffmpeg kommt vom System (`.deb` hängt von `ffmpeg` ab). Vorschau braucht unter WebKitGTK die GStreamer-Plugins good/bad/libav, sonst bleibt das Bild schwarz; AppImage liefert sie per `bundleMediaFramework` mit. Hardware: Familie `vaapi` (Intel/AMD) – braucht `-vaapi_device` vor den Eingaben (`hw_init_args`), den Filter `format=nv12,hwupload` am Ende (`final_format_filter`) und **kein** `-pix_fmt` (`pix_fmt_args`); Gerät per `TRIMLY_VAAPI_DEVICE` (Standard `/dev/dri/renderD128`). NVENC und QSV gehen unter Linux wie gehabt. „Öffnen mit“: eigene Desktop-Vorlage `linux/trimly.desktop` mit `Exec=… %F` (Tauris Standard übergibt keine Datei), MIME-Typen aus `fileAssociations`; die Datei kommt als Startargument wie unter Windows. In einer UTM-VM auf dem Mac gibt es keine GPU, dort läuft nur libx264.
+- `ffmpeg.rs`: pure logic without processes. `find_tool` (first next to the own executable = bundled ffmpeg, then PATH + Homebrew folders, because Finder apps don't inherit the shell PATH; on Windows `.exe`, winget links, `C:\ffmpeg\bin`), encoders as family × codec (`encoder_for("amf", "av1")` → `av1_amf`; CPU only `libx264`), `listed_hw_encoders_all` + `encoder_test_args` (every hardware encoder is checked with a test encode at **640×480** – ffmpeg lists NVENC even without a card, and `hevc_amf` rejects 320×240), `pick_encoder` (preferred device + codec → otherwise other hardware with that codec → H.264 → libx264), `encoder_args` (**NVENC always with `-bf 0`**, otherwise a grey picture at 29.97 fps; HEVC with `-tag:v hvc1` for Apple players), `parse_probe`, `build_args` (`streams` both/video/audio), `progress_from_line`.
+- `edit.rs`: editor export, counterpart of `EditRenderer.scala` (concat, zoompan, overlay, amix), pure logic with tests; `render_edit` in `lib.rs` checks the sources with ffprobe and, like `export_video`, falls back from hardware to libx264.
+- `media_server.rs`: preview videos are served by an own HTTP server on `127.0.0.1` (random port, token in the URL, only files allowed via `media_url`). **Don't go back to the Tauri asset protocol:** it answers ranges with at most 1 MB, and for long videos the `moov` index is bigger, so WebKit only shows 0 × 0 without a picture.
+- Bundled ffmpeg (Windows and macOS): `scripts/build-ffmpeg.sh` builds a slim, static ffmpeg/ffprobe (GPL because of libx264) into `binaries/` (not in Git): on Windows in MSYS2 UCRT64 (~18 MB), on the Mac with Homebrew tools (~11 MB each, app 27 MB, DMG ~14 MB). `tauri.windows.conf.json`/`tauri.macos.conf.json` put it next to the executable via `externalBin`. **Without these files `desktop` and `desktop:build` fail.** Mac specifics: ld always takes the `.dylib` if it sits next to the `.a`, so the script copies the `.a` of x264/lame/mpg123 into a separate folder and builds dav1d statically itself; according to `otool -L` the result may only need `/usr/lib` and `/System` (the release workflow checks this too). Homebrew libs are built for the current macOS version (linker warning "built for newer macOS"); untested on macOS 11–14. New formats/filters: extend the lists in the script (the filters used by code in `ffmpeg.rs`/`edit.rs`, plus `transpose`/`hflip`/`vflip`/`rotate` for auto-rotating portrait phone videos). If ffmpeg can't decode a codec, `probe` says so right when opening (`check_decodable` against `ffmpeg -codecs`); ffprobe errors on unknown extensions go through `unreadable_file_message`.
+- `lib.rs`: all ffmpeg calls go through `tool_command` (stdin null, on Windows `CREATE_NO_WINDOW`, otherwise the GUI app flashes a console window on every call). `encoder_info` is async: synchronous commands run on the main thread and would freeze the window until the encoder test is done. Tauri commands `encoder_info`, `initial_file`, `frontend_log` (UI messages to stderr, useful for debugging without a window), `probe`, `media_url`, `export_video` (progress via `Channel<f64>`; `codec`/`encoder` from the settings; if a hardware encoder fails, automatic retry with libx264), `cancel_export`. Saving in the background: without a default folder, `desktop.js` starts the export right away into `temp_output` (temp folder, prefix `trimly-export-`) while the save dialog is open; afterwards `finalize_export` (rename, copy across drives) or on cancel `cancel_export` + `discard_temp`. Both only touch their own temp files. At most one export runs at a time. Cancelling returns the error `"cancelled"`, which the frontend swallows silently. `TRIMLY_ENCODER=cpu` forces libx264.
+- "Open with": `bundle.fileAssociations` (role Viewer, rank `Alternate` → never the default app). Windows passes the file as a start argument, macOS as `RunEvent::Opened` → remembered in `PendingFile` and reported as the `open-file` event; the UI fetches it via `initial_file` (returns each file only once). Testing on the Mac: `open --stderr log.txt -a …/Trimly.app video.mp4`. Single instance: `tauri-plugin-single-instance` (must be the first plugin) passes the file of a second launch to the running window via `PendingFile` + `open-file` (tested on Windows). Careful when testing: two builds with the same `identifier` share this.
+- Debugging without screen access: `cargo build && ./target/debug/trimly /path/video.mp4 2>&1 | grep '\[ui\]'` (the debug build loads the UI from `localhost:3000`).
+- `tauri.conf.json`: macOS title bar as an overlay (`.is-desktop.is-mac .topbar` leaves 84 px for the traffic-light buttons; Windows has a normal title bar).
+- **Linux (tested November 2026 in a UTM VM: Ubuntu 24.04 ARM64, libx264; VA-API on real hardware still untested):** builds as `.deb`, `.rpm` and AppImage (release workflow, ubuntu-22.04 x64 + ARM64). ffmpeg comes from the system (the `.deb` depends on `ffmpeg`). Under WebKitGTK the preview needs the GStreamer plugins good/bad/libav, otherwise the picture stays black; the AppImage ships them via `bundleMediaFramework`. Hardware: family `vaapi` (Intel/AMD) – needs `-vaapi_device` before the inputs (`hw_init_args`), the filter `format=nv12,hwupload` at the end (`final_format_filter`) and **no** `-pix_fmt` (`pix_fmt_args`); device via `TRIMLY_VAAPI_DEVICE` (default `/dev/dri/renderD128`). NVENC and QSV work on Linux as usual. "Open with": own desktop template `linux/trimly.desktop` with `Exec=… %F` (Tauri's default passes no file), MIME types from `fileAssociations`; the file arrives as a start argument like on Windows. A UTM VM on the Mac has no GPU, so only libx264 runs there.
 
 ### Backend (`backend/app/video/`)
 
-- `VideoController.scala`: HTTP-Endpunkte (siehe `conf/routes`).
-- `VideoService.scala`: Dateiablage, Status-Map (`Computing`/`Ready`/`Failed(msg)`), Aufräum-Timer, `/keepalive` für den Editor. Der Zustand liegt **nur im Speicher**.
-- `VideoCalculator.scala`: füllt fehlende Parameter aus ffprobe auf, validiert Start/Ende, deckelt die Bitrate.
-- `FFmpegUtils.scala`: `trimVideo` (Original-Modus, `-c copy`), `extractAudio` (MP3), `processVideo` (NVENC mit CUDA-Dekodierung, wenn der Test-Encode klappt, sonst/Fallback libx264 veryfast).
-- `EditRenderer.scala`: Filtergraph für den Editor (`POST /render`).
+- `VideoController.scala`: HTTP endpoints (see `conf/routes`).
+- `VideoService.scala`: file storage, status map (`Computing`/`Ready`/`Failed(msg)`), cleanup timers, `/keepalive` for the editor. State lives **in memory only**.
+- `VideoCalculator.scala`: fills in missing parameters from ffprobe, validates start/end, caps the bitrate.
+- `FFmpegUtils.scala`: `trimVideo` (original mode, `-c copy`), `extractAudio` (MP3), `processVideo` (NVENC with CUDA decoding if the test encode works, otherwise/fallback libx264 veryfast).
+- `EditRenderer.scala`: filter graph for the editor (`POST /render`).
 
-### API (nur Web)
+### API (web only)
 
-| Route | Zweck |
+| Route | Purpose |
 |---|---|
-| `POST /store` | Multipart `video` → `{originalId}` |
-| `POST /process` | `originalId`, `mode` (`original` = nur schneiden), `output` (`both`/`video`/`audio`), `startTime`/`endTime` (ms), `volume`, `framerate`, `bitrate` (kbit/s), `resolution` (`BxH`) → `{filename}`; unbekanntes Original → 404 `{status: "missing"}` |
+| `POST /store` | multipart `video` → `{originalId}` |
+| `POST /process` | `originalId`, `mode` (`original` = trim only), `output` (`both`/`video`/`audio`), `startTime`/`endTime` (ms), `volume`, `framerate`, `bitrate` (kbit/s), `resolution` (`WxH`) → `{filename}`; unknown original → 404 `{status: "missing"}` |
 | `GET /check/:filename` | `{status: ready, size}` / `computing` / `error` + `message` / `unknown` |
-| `GET /download/:filename?name=` | fertige Datei, gestreamt, mit Wunsch-Dateiname |
-| `POST /render`, `POST /keepalive` | Editor |
+| `GET /download/:filename?name=` | finished file, streamed, with the requested file name |
+| `POST /render`, `POST /keepalive` | editor |
 
-## Starten und testen
+## Running and testing
 
-Auf dem Mac sind Node, Rust und ffmpeg per Homebrew installiert, sbt nur im Backend-Container. **Vor Arbeiten `git pull` bzw. `git fetch` prüfen** – der Stand wird auch von einem Windows-Rechner gepusht; im November 2026 fehlten hier lokal 7 Commits.
+On the Mac, Node, Rust and ffmpeg are installed via Homebrew; sbt only exists in the backend container. **Check `git pull` / `git fetch` before working** – the code is also pushed from a Windows machine; in November 2026 seven commits were missing locally.
 
 ```bash
-cd frontend && npm run desktop                  # Desktop-App mit Hot Reload
+cd frontend && npm run desktop                  # desktop app with hot reload
 cd frontend && npm run desktop:build            # .app/.dmg in src-tauri/target/release/bundle/
-docker compose up --build                       # Web: Frontend :3000, Backend :9000
+docker compose up --build                       # web: frontend :3000, backend :9000
 ```
 
 ```bash
 cd frontend && CI=true npm test -- --watchAll=false      # Jest
-cd frontend/src-tauri && cargo test                      # Rust, inkl. echtes ffmpeg
+cd frontend/src-tauri && cargo test                      # Rust, including real ffmpeg
 docker compose run --rm backend sbt -batch test          # Scala
 ```
 
-Tests mit echtem Video nutzen `backend/test/resources/testVideo.mp4` (2560×1440, 60 fps, 19,05 s, Stereo-Ton; künstlich erzeugt, 1,8 MB) und werden übersprungen, wenn es oder ffmpeg fehlt. Neu erzeugen: `ffmpeg -f lavfi -i "gradients=size=2560x1440:rate=60:duration=19.05:speed=0.02:seed=7" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=19.05" -ac 2 -c:v libx264 -preset slow -crf 40 -g 120 -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart -shortest testVideo.mp4`. `.github/workflows/test.yml` führt alle drei Testreihen bei jedem Push und PR auf Linux aus (Badge im README). In Scala Futures immer mit `Await`/`futureValue` auswerten, nie in `fut.map { assert }`.
+Tests with a real video use `backend/test/resources/testVideo.mp4` (2560×1440, 60 fps, 19.05 s, stereo audio; generated, 1.8 MB) and are skipped if it or ffmpeg is missing. To regenerate it: `ffmpeg -f lavfi -i "gradients=size=2560x1440:rate=60:duration=19.05:speed=0.02:seed=7" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=19.05" -ac 2 -c:v libx264 -preset slow -crf 40 -g 120 -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart -shortest testVideo.mp4`. `.github/workflows/test.yml` runs all three test suites on Linux on every push and PR (badge in the README). In Scala, always evaluate futures with `Await`/`futureValue`, never inside `fut.map { assert }`.
 
-README-Screenshots in `docs/images/` stammen von Playwright/WebKit gegen `docker compose up`, mit einem neutralen, per `ffmpeg -f lavfi -i gradients=…` erzeugten Video (keine Spielszenen/Waffen). Als JPEG ablegen.
+README screenshots in `docs/images/` come from Playwright/WebKit against `docker compose up`, with a neutral video generated via `ffmpeg -f lavfi -i gradients=…` (no game scenes/weapons). Store them as JPEG.
 
 ### Release
 
-`.github/workflows/release.yml` baut bei jedem Tag `v*` die Desktop-App für Windows (`windows-latest`, mit mitgeliefertem ffmpeg, gecacht über den Hash von `build-ffmpeg.sh`), macOS (`macos-latest`, Apple Silicon, ohne ffmpeg, nur ad-hoc signiert) und Linux (`ubuntu-22.04` und `ubuntu-22.04-arm`, `.deb`/`.rpm`/AppImage, ohne ffmpeg) und lädt die Installer in einen Entwurfs-Release. Sind alle Builds grün, **veröffentlicht der Job `publish` ihn automatisch** (Tags mit Bindestrich wie `v0.3.0-beta.1` als Vorabversion). Der Release-Text (unsigniert, SmartScreen/Gatekeeper, GPL-Hinweis mit ffmpeg-Version) steht im Job `create-release`, der auch prüft, dass Tag, `package.json` und `Cargo.toml` dieselbe Version haben.
+`.github/workflows/release.yml` builds the desktop app on every `v*` tag for Windows (`windows-latest`) and macOS (`macos-latest`, Apple Silicon, only ad-hoc signed), both with bundled ffmpeg (cached by the hash of `build-ffmpeg.sh`), and for Linux (`ubuntu-22.04` and `ubuntu-22.04-arm`, `.deb`/`.rpm`/AppImage, without ffmpeg), and uploads the installers to a draft release. Once all builds are green, **the `publish` job publishes it automatically** (tags with a hyphen like `v0.3.0-beta.1` as a pre-release). The release text (unsigned, SmartScreen/Gatekeeper, GPL notice with the ffmpeg version) lives in the `create-release` job, which also checks that the tag, `package.json` and `Cargo.toml` have the same version.
 
-1. Version erhöhen in `frontend/package.json` und `frontend/src-tauri/Cargo.toml` (danach `cargo check` in `src-tauri`, damit `Cargo.lock` mitzieht). `tauri.conf.json` liest die Version aus `package.json` (`"version": "../package.json"`).
-2. Auf master committen und pushen, dann Tag setzen und pushen:
+1. Bump the version in `frontend/package.json` and `frontend/src-tauri/Cargo.toml` (then run `cargo check` in `src-tauri` so `Cargo.lock` follows). `tauri.conf.json` reads the version from `package.json` (`"version": "../package.json"`).
+2. Commit and push on master, then create and push the tag:
    ```bash
    git tag v0.2.0 && git push origin v0.2.0
    ```
-3. Unter GitHub → Actions den Lauf abwarten (erster Windows-Lauf baut ffmpeg, dauert deutlich länger). Danach ist der Release öffentlich.
-4. Schlug ein Lauf fehl, bleibt es beim Entwurf: Entwurf löschen, Tag löschen (`git push --delete origin v0.2.0 && git tag -d v0.2.0`), Fehler beheben, neu taggen.
+3. Wait for the run under GitHub → Actions (the first run after a change to `build-ffmpeg.sh` builds ffmpeg and takes much longer). After that the release is public.
+4. If a run failed, it stays a draft: delete the draft, delete the tag (`git push --delete origin v0.2.0 && git tag -d v0.2.0`), fix the problem, tag again.
 
-Lizenz: GPL-3.0-or-later (`LICENSE`), passend zum mitgelieferten libx264-ffmpeg. `frontend/.env.production` (im Git, Ausnahme in `.gitignore`) schaltet Source-Maps im Build ab.
+License: GPL-3.0-or-later (`LICENSE`), matching the bundled libx264 ffmpeg. `frontend/.env.production` (in Git, exception in `.gitignore`) turns off source maps in the build.
 
-## Bekannte Baustellen
+## Known issues
 
-- Editor-Tempo: Video- und Ton-Abschnitte haben `speed` (0,25–4, `SPEEDS` in `editor/project.js`), Timeline-Länge = (srcEnd − srcStart) / speed (`segLen`). Gerendert mit `setpts=(PTS-STARTPTS)/speed` und einer `atempo`-Kette (je Glied 0,5–2), in `edit.rs` und `EditRenderer.scala` gleich.
-- Editor-Renderer gibt es doppelt: `EditRenderer.scala` (Web) und `src-tauri/src/edit.rs` (Desktop). Änderungen am Filtergraph in beiden machen; neue ffmpeg-Filter auch in `scripts/build-ffmpeg.sh` freischalten. Der Editor hat noch eigene Presets (`src/presets.js`) statt `lib/presets.js`.
-- Windows-Build läuft (November 2026, Node 26, Rust 1.99, VS Build Tools 2022, AMF getestet). H.264/HEVC/AV1 über AMF getestet. Ungetestet: NVENC/Quick Sync mit dem mitgelieferten ffmpeg, die Desktop-Teile des Einstellungsmenüs per Klick (nur im Browser angesehen).
-- Windows-Build-Umgebung: `winget install` von `OpenJS.NodeJS.LTS`, `Rustlang.Rustup`, `Microsoft.VisualStudio.2022.BuildTools` (Workload VCTools), `MSYS2.MSYS2` (für ffmpeg). Ein Terminal, das vor der Installation offen war, kennt `npm` nicht.
-- Unter Windows aus Claudes Shell gestartete Installer landen in `AppData\Local\Packages\Claude_…\LocalCache` (MSIX-Umleitung), nicht in Florians echtem AppData. Installer daher von Florian per Doppelklick starten lassen.
-- Im Linux-Container gibt es kein VideoToolbox; der Server kann nur NVENC oder CPU.
-- Die Web-Version kennt die Bildrate der Quelle nicht und sendet die Preset-fps unverändert.
-- Die alte, 63 MB große `testVideo.mp4` steckt noch in der Git-Historie (Klonen lädt sie mit); loswerden ginge nur durch Umschreiben der Historie mit Force-Push.
+- Editor speed: video and audio segments have `speed` (0.25–4, `SPEEDS` in `editor/project.js`), timeline length = (srcEnd − srcStart) / speed (`segLen`). Rendered with `setpts=(PTS-STARTPTS)/speed` and an `atempo` chain (each link 0.5–2), the same in `edit.rs` and `EditRenderer.scala`.
+- The editor renderer exists twice: `EditRenderer.scala` (web) and `src-tauri/src/edit.rs` (desktop). Make filter graph changes in both; enable new ffmpeg filters in `scripts/build-ffmpeg.sh` too. The editor still has its own presets (`src/presets.js`) instead of `lib/presets.js`.
+- The Windows build works (November 2026, Node 26, Rust 1.99, VS Build Tools 2022). H.264/HEVC/AV1 tested via AMF. Untested: NVENC/Quick Sync with the bundled ffmpeg, the desktop parts of the settings menu by clicking (only viewed in the browser).
+- Windows build environment: `winget install` of `OpenJS.NodeJS.LTS`, `Rustlang.Rustup`, `Microsoft.VisualStudio.2022.BuildTools` (workload VCTools), `MSYS2.MSYS2` (for ffmpeg). A terminal that was open before the installation doesn't know `npm`.
+- On Windows, installers started from Claude's shell end up in `AppData\Local\Packages\Claude_…\LocalCache` (MSIX redirection), not in Florian's real AppData. So let Florian start installers by double-clicking.
+- The Linux container has no VideoToolbox; the server can only do NVENC or CPU.
+- The web version doesn't know the source frame rate and sends the preset fps unchanged.
+- The old 63 MB `testVideo.mp4` is still in the Git history (cloning downloads it); getting rid of it would require rewriting history with a force push.
 
-## Konventionen
+## Conventions
 
-- UI-Texte und Fehlermeldungen auf **Englisch** (seit November 2026, Wunsch von Florian), Satzanfang groß, keine Großbuchstaben-Labels. Kommentare, Commit-Nachrichten und CLAUDE.md bleiben deutsch.
-- Fehlermeldungen sagen, was zu tun ist (z. B. `brew install ffmpeg`).
-- Zeiten: Frontend und Rust in Sekunden, Web-API in Millisekunden. Bitraten immer in kbit/s.
-- Backend loggt mit `println` und Präfixen wie `[PROCESS]`, `[FFMPEG]`.
+- **Everything in English** (since November 2026, Florian's wish): UI texts, error messages, code comments, commit messages and this file. Sentence case, no all-caps labels.
+- Error messages say what to do (e.g. `brew install ffmpeg`).
+- Times: frontend and Rust in seconds, web API in milliseconds. Bitrates always in kbit/s.
+- The backend logs with `println` and prefixes like `[PROCESS]`, `[FFMPEG]`.

@@ -1,2 +1,2 @@
-# Shell-Skripte immer mit LF, sonst scheitert bash (MSYS2/macOS) an \r
+# Shell scripts always with LF, otherwise bash (MSYS2/macOS) chokes on \r
 *.sh text eol=lf

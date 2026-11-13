@@ -3,11 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 /**
- * Rückgängig/Wiederholen für einen Zustand aus mehreren Werten.
- * Änderungen werden erst nach `delay` ms Ruhe ein Schritt, damit ein Griff-Zug
- * nicht hunderte Einträge erzeugt. `apply(snapshot)` setzt alle Werte zurück.
- * `rebase(next)`: `next` (Objekt oder Funktion des aktuellen Stands) wird neuer Ausgangspunkt,
- * der Verlauf beginnt neu (neues Video, Metadaten geladen).
+ * Undo/redo for a state made of several values.
+ * Changes only become a step after `delay` ms of quiet, so dragging a handle
+ * doesn't create hundreds of entries. `apply(snapshot)` restores all values.
+ * `rebase(next)`: `next` (object or function of the current state) becomes the new starting point,
+ * and the history starts over (new video, metadata loaded).
  */
 export function useUndo(state, apply, delay = 500) {
   const committed = useRef(state);
@@ -28,7 +28,7 @@ export function useUndo(state, apply, delay = 500) {
       bump();
       return undefined;
     }
-    bump(); // „Rückgängig“ wird sofort möglich, auch vor Ablauf der Wartezeit
+    bump(); // "Undo" is possible right away, even before the delay is over
     timer.current = setTimeout(() => {
       if (same(current.current, committed.current)) return;
       undoStack.current.push(committed.current);
@@ -53,7 +53,7 @@ export function useUndo(state, apply, delay = 500) {
 
   const undo = useCallback(() => {
     if (!same(current.current, committed.current)) {
-      // noch nicht gespeicherte Änderung: zurück zum letzten Stand
+      // change not yet recorded: back to the last state
       redoStack.current.push(current.current);
       go(committed.current);
     } else if (undoStack.current.length) {

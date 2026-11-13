@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
-// Freier Zuschnitt über dem Vorschau-Video. `crop` ist relativ zum Bild: {x, y, w, h} in 0..1.
-// Außerhalb des Rahmens wird abgedunkelt; im Bearbeiten-Modus lässt er sich verschieben und an
-// Ecken und Kanten in jedes Format ziehen.
+// Free crop over the preview video. `crop` is relative to the frame: {x, y, w, h} in 0..1.
+// Outside the box is darkened; in edit mode it can be moved and dragged at its
+// corners and edges into any shape.
 const MIN = 0.05;
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-/** Neue Box nach Ziehen um dx/dy (relativ) mit Griff `mode` ("move" oder Himmelsrichtung). */
+/** New box after dragging by dx/dy (relative) with handle `mode` ("move" or a compass direction). */
 export function dragCrop(start, mode, dx, dy) {
   if (mode === "move") {
     return { ...start, x: clamp(start.x + dx, 0, 1 - start.w), y: clamp(start.y + dy, 0, 1 - start.h) };
@@ -29,14 +29,14 @@ export function dragCrop(start, mode, dx, dy) {
 }
 
 /**
- * Liegt als Kind im Bildrahmen (`frameRef`, position: relative) und füllt ihn ganz aus.
- * `sourceSize` = Ausgabegröße des ganzen Bildes, für die Pixelangabe im Rahmen.
+ * Sits as a child of the frame (`frameRef`, position: relative) and fills it completely.
+ * `sourceSize` = output size of the whole frame, for the pixel label in the box.
  */
 export default function CropOverlay({ crop, editing, sourceSize, frameRef, onChange, onDragStart }) {
   const [rect, setRect] = useState(null);
   const drag = useRef(null);
 
-  // Größe des Bildrahmens verfolgen (Fenstergröße)
+  // Track the frame size (window size)
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame) return undefined;

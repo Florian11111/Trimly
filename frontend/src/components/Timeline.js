@@ -4,27 +4,27 @@ import { formatTime } from "../lib/format";
 const STRIP_HEIGHT = 64;
 const MIN_LENGTH = 0.01; // Sekunden
 const HOLD_MS = 200;
-// Vorschaubilder erst nach dem Player laden, damit er nicht um die ersten Daten konkurriert
-const THUMBS_DELAY_MS = 400; // so lange gedrückt halten, bis ein Griff verschiebbar wird
+// Load thumbnails after the player, so they don't compete for the first data
+const THUMBS_DELAY_MS = 400; // how long to hold until a handle becomes draggable
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /**
- * Filmstreifen mit Vorschaubildern, gelber Schnittklammer und Abspielkopf.
- * Ziehen an den Griffen setzt Anfang/Ende, Klicken oder Ziehen auf dem Streifen
- * springt. Shift+Klick setzt den Anfang, Alt+Klick das Ende.
+ * Film strip with thumbnails, trim bracket and playhead.
+ * Dragging the handles sets start/end, clicking or dragging on the strip
+ * seeks. Shift+click sets the start, Alt+click the end.
  */
 export default function Timeline({ src, duration, aspect, range, current, onSeek, onRangeChange }) {
   const trackRef = useRef(null);
   const canvasRef = useRef(null);
   const dragRef = useRef(null);
-  const holdRef = useRef(null); // { mode, time, timer } solange ein Griff gedrückt, aber noch nicht gegriffen ist
+  const holdRef = useRef(null); // { mode, time, timer } while a handle is pressed but not yet grabbed
   const [grabbing, setGrabbing] = useState(null);
   const [thumbsReady, setThumbsReady] = useState(false);
   const [width, setWidth] = useState(0);
   const [start, end] = range;
 
-  // Breite beobachten, damit die Vorschaubilder den Streifen genau füllen
+  // Watch the width so the thumbnails fill the strip exactly
   useEffect(() => {
     const el = trackRef.current;
     if (!el || typeof ResizeObserver === "undefined") return undefined;
@@ -33,8 +33,8 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
     return () => ro.disconnect();
   }, []);
 
-  // Vorschaubilder direkt in den Canvas zeichnen. Kein Auslesen nötig, daher
-  // funktioniert das auch mit Videos aus dem Tauri-Asset-Protokoll.
+  // Draw thumbnails straight into the canvas. No pixel readback needed, so
+  // this also works with videos from a different origin.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !src || !duration || !width) return undefined;
@@ -62,7 +62,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
       probe.playsInline = true;
       probe.preload = "auto";
       probe.src = src;
-      // Erst zeichnen, wenn ein Bild dekodiert ist; sonst bleibt das erste leer (WebKit)
+      // Only draw once a frame is decoded; otherwise the first one stays empty (WebKit)
       if (probe.readyState < 2) await once("loadeddata");
       for (let i = 0; i < count && !cancelled; i++) {
         const seeked = once("seeked");
@@ -96,7 +96,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
     else onSeek(t);
   };
 
-  // Streifen: Klicken oder Ziehen springt; Shift/Alt setzt Anfang/Ende
+  // Strip: clicking or dragging seeks; Shift/Alt sets start/end
   const pressTrack = (e) => {
     if (!duration || e.button !== 0) return;
     e.preventDefault();
@@ -108,7 +108,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
     apply(m, timeAt(e.clientX));
   };
 
-  // Griff: kurzer Klick springt an die Stelle, erst Gedrückthalten macht ihn verschiebbar
+  // Handle: a short click seeks there, only holding it makes it draggable
   const pressHandle = (mode) => (e) => {
     if (!duration || e.button !== 0) return;
     e.preventDefault();
@@ -130,7 +130,7 @@ export default function Timeline({ src, duration, aspect, range, current, onSeek
   const endDrag = (e) => {
     const hold = holdRef.current;
     if (hold) {
-      // losgelassen, bevor der Griff gegriffen war: wie ein Klick → springen
+      // released before the handle was grabbed: like a click → seek
       clearTimeout(hold.timer);
       holdRef.current = null;
       onSeek(hold.time);

@@ -1,5 +1,5 @@
-# Tests bei jedem Push und Pull Request: Oberfläche (Jest), Desktop (Rust, mit echtem ffmpeg)
-# und Web-Backend (Scala). Alle drei laufen parallel auf Linux.
+# Tests on every push and pull request: UI (Jest), desktop (Rust, with real ffmpeg)
+# and web backend (Scala). All three run in parallel on Linux.
 name: Tests
 
 on:
@@ -43,7 +43,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: frontend/src-tauri
-      # generate_context! erwartet den Ordner frontendDist, die Tests brauchen den Inhalt nicht
+      # generate_context! expects the frontendDist folder; the tests don't need its contents
       - run: mkdir -p frontend/build
       - run: cargo test
         working-directory: frontend/src-tauri

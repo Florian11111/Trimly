@@ -1,13 +1,13 @@
-# NVIDIA-GPU-Encoding (NVENC) unter Windows/WSL2 mit Docker Desktop.
+# NVIDIA GPU encoding (NVENC) on Windows/WSL2 with Docker Desktop.
 #
-# "--gpus all" reicht hier nicht: Docker Desktop bindet nur einen Teil der
-# NVIDIA-Treiberdateien ein, CUDA schlägt dann mit "cuInit ... named symbol
-# not found" fehl. Deshalb die kompletten WSL-Treiber direkt einbinden.
+# "--gpus all" is not enough here: Docker Desktop only mounts part of the
+# NVIDIA driver files, and CUDA then fails with "cuInit ... named symbol
+# not found". So the complete WSL drivers are mounted directly.
 #
-# Starten mit:
+# Start with:
 # docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 #
-# Ohne NVIDIA-Karte diese Datei weglassen, das Backend nutzt dann die CPU.
+# Without an NVIDIA card, leave this file out; the backend then uses the CPU.
 services:
   backend:
     devices:

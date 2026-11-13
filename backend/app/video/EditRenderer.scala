@@ -5,19 +5,19 @@ import java.io.File
 import scala.sys.process._
 import scala.util.Try
 
-// Projektbeschreibung aus dem Editor-Tab. Alle Zeiten in Sekunden,
-// Positionen relativ zum Ausgabebild (0..1).
+// Project description from the editor tab. All times in seconds,
+// positions relative to the output frame (0..1).
 case class EditPreset(width: Int, height: Int, fps: Double, bitrate: Long)
-// Videospur: Abschnitte werden nacheinander abgespielt
-// speed: Abspieltempo 0.25–4 (fehlt = 1); auf der Timeline dauert ein Abschnitt (end − start) / speed
+// Video track: segments play one after another
+// speed: playback speed 0.25–4 (missing = 1); on the timeline a segment lasts (end − start) / speed
 case class EditVideoSeg(originalId: String, start: Double, end: Double, speed: Double = 1.0)
-// Tonspur: Abschnitte liegen frei auf der Timeline (at = Startzeit in der Ausgabe)
+// Audio track: segments are placed freely on the timeline (at = start time in the output)
 case class EditAudioSeg(originalId: String, start: Double, end: Double, at: Double, volume: Double, speed: Double = 1.0)
-// Zoom auf den Bereich x,y (oben links) mit Breite w; Höhe ergibt sich aus dem Seitenverhältnis
+// Zoom into the area x,y (top left) with width w; the height follows from the aspect ratio
 case class EditZoom(start: Double, end: Double, x: Double, y: Double, w: Double)
-// Overlay = transparentes PNG in Ausgabegröße (Pfeile, Text, Bilder rendert der Browser)
+// Overlay = transparent PNG in output size (the browser renders arrows, text and images)
 case class EditOverlay(file: String, start: Double, end: Double)
-// Freier Zuschnitt des Ausgabebildes (relativ, 0..1); das Ergebnis wird entsprechend kleiner
+// Free crop of the output frame (relative, 0..1); the result gets smaller accordingly
 case class EditCrop(x: Double, y: Double, w: Double, h: Double) {
   def valid: Boolean = x >= 0 && y >= 0 && w > 0.01 && h > 0.01 && x + w <= 1.001 && y + h <= 1.001
 }
@@ -27,7 +27,7 @@ case class EditProject(
   audio: Seq[EditAudioSeg],
   zooms: Seq[EditZoom],
   overlays: Seq[EditOverlay],
-  output: String = "both", // "both", "video" (ohne Ton) oder "audio" (nur Ton als MP3)
+  output: String = "both", // "both", "video" (no audio) or "audio" (audio only, as MP3)
   crop: Option[EditCrop] = None
 )
 
@@ -43,18 +43,18 @@ object EditProject {
 
 object EditRenderer {
 
-  // Dauer des weichen Ein-/Auszoomens in Sekunden
+  // Duration of the smooth zoom in/out in seconds
   private val ZoomRamp = 0.3
 
-  // Zahlen ohne wissenschaftliche Notation und unabhängig von der Locale
+  // Numbers without scientific notation and independent of the locale
   private def num(d: Double): String =
     BigDecimal(d).setScale(4, BigDecimal.RoundingMode.HALF_UP).bigDecimal.stripTrailingZeros.toPlainString
 
-  // Tempo-Grenzen wie im Editor (SPEEDS in project.js)
+  // Speed limits as in the editor (SPEEDS in project.js)
   private val MinSpeed = 0.25
   private val MaxSpeed = 4.0
 
-  // Ton-Tempo als atempo-Kette (je Glied 0.5–2), z. B. 4 → ",atempo=2,atempo=2"; Tempo 1 → leer
+  // Audio speed as an atempo chain (each link 0.5–2), e.g. 4 → ",atempo=2,atempo=2"; speed 1 → empty
   def atempo(speed: Double): String =
     if (Math.abs(speed - 1) < 1e-6) ""
     else {
@@ -69,25 +69,25 @@ object EditRenderer {
   def validate(p: EditProject, overlayFiles: Map[String, String]): Option[String] = {
     val total = p.video.map(s => (s.end - s.start) / s.speed).sum
     val badSpeed = (v: Double) => v < MinSpeed || v > MaxSpeed
-    if (p.video.isEmpty) Some("Die Videospur ist leer.")
-    else if (p.video.exists(s => s.start < 0 || s.end - s.start < 0.005)) Some("Ungültiger Video-Abschnitt.")
+    if (p.video.isEmpty) Some("The video track is empty.")
+    else if (p.video.exists(s => s.start < 0 || s.end - s.start < 0.005)) Some("Invalid video segment.")
     else if (p.video.exists(s => badSpeed(s.speed)) || p.audio.exists(s => badSpeed(s.speed)))
-      Some("Das Tempo muss zwischen 0,25× und 4× liegen.")
+      Some("Speed must be between 0.25× and 4×.")
     else if (p.audio.exists(s => s.start < 0 || s.end - s.start < 0.005 || s.at < 0 || s.volume < 0))
-      Some("Ungültiger Ton-Abschnitt.")
+      Some("Invalid audio segment.")
     else if (p.zooms.exists(z => z.end <= z.start || z.w <= 0 || z.w > 1 || z.x < 0 || z.y < 0 || z.x + z.w > 1.001 || z.y + z.w > 1.001))
-      Some("Ungültiger Zoom-Bereich.")
+      Some("Invalid zoom area.")
     else if (p.overlays.exists(o => o.end <= o.start || !overlayFiles.contains(o.file)))
-      Some("Ungültiges Overlay.")
+      Some("Invalid overlay.")
     else if (p.preset.width < 16 || p.preset.height < 16 || p.preset.fps <= 0 || p.preset.bitrate <= 0)
-      Some("Ungültige Export-Einstellungen.")
-    else if (total > 6 * 3600) Some("Projekt ist zu lang.")
-    else if (p.crop.exists(c => !c.valid)) Some("Ungültiger Zuschnitt.")
-    else if (!Set("both", "video", "audio").contains(p.output)) Some("Ungültiges Ausgabeformat.")
+      Some("Invalid export settings.")
+    else if (total > 6 * 3600) Some("The project is too long.")
+    else if (p.crop.exists(c => !c.valid)) Some("Invalid crop.")
+    else if (!Set("both", "video", "audio").contains(p.output)) Some("Invalid output format.")
     else None
   }
 
-  /** Baut das ffmpeg-Kommando. paths: originalId -> Datei, overlayFiles: Overlay-Name -> PNG. */
+  /** Builds the ffmpeg command. paths: originalId -> file, overlayFiles: overlay name -> PNG. */
   def buildCommand(
     p: EditProject,
     paths: Map[String, String],
@@ -99,7 +99,7 @@ object EditRenderer {
   ): Seq[String] = {
     val W = p.preset.width - p.preset.width % 2
     val H = p.preset.height - p.preset.height % 2
-    // Nicht mehr FPS als die schnellste Quelle, sonst nur duplizierte Frames
+    // No more fps than the fastest source, otherwise only duplicated frames
     val fps = if (sourceFps > 0) Math.min(p.preset.fps, sourceFps) else p.preset.fps
     val total = p.video.map(s => (s.end - s.start) / s.speed).sum
 
@@ -108,7 +108,7 @@ object EditRenderer {
     var inputIndex = 0
     def addInput(args: String*): Int = { inputs ++= args; inputIndex += 1; inputIndex - 1 }
 
-    // Videospur: jeder Abschnitt einzeln (schnelles Suchen per -ss vor -i), auf Ausgabegröße bringen, aneinanderhängen
+    // Video track: each segment on its own (fast seek with -ss before -i), scaled to the output size, then concatenated
     val videoLabels = p.video.zipWithIndex.map { case (seg, i) =>
       val idx = addInput("-ss", num(seg.start), "-t", num(seg.end - seg.start), "-i", paths(seg.originalId))
       filters += s"[$idx:v:0]setpts=(PTS-STARTPTS)/${num(seg.speed)},scale=$W:$H:force_original_aspect_ratio=decrease," +
@@ -118,7 +118,7 @@ object EditRenderer {
     filters += s"${videoLabels.mkString}concat=n=${videoLabels.size}:v=1:a=0[vcat]"
     var current = "[vcat]"
 
-    // Zoom: Zoomfaktor und Bildmitte als Funktion der Zeit, mit weicher Rampe
+    // Zoom: zoom factor and centre as a function of time, with a smooth ramp
     if (p.zooms.nonEmpty) {
       val ramps = p.zooms.map { z =>
         val r = num(Math.min(ZoomRamp, (z.end - z.start) / 2))
@@ -134,20 +134,20 @@ object EditRenderer {
       current = "[vzoom]"
     }
 
-    // Overlays nach dem Zoom, damit Pfeile/Text dort bleiben, wo sie gezeichnet wurden
+    // Overlays after the zoom, so arrows/text stay where they were drawn
     p.overlays.zipWithIndex.foreach { case (o, i) =>
       val idx = addInput("-loop", "1", "-i", overlayFiles(o.file))
       filters += s"[$idx:v:0]scale=$W:$H,format=rgba[ov$i]"
       filters += s"$current[ov$i]overlay=0:0:enable='between(t,${num(o.start)},${num(o.end)})':shortest=1[vo$i]"
       current = s"[vo$i]"
     }
-    // Zuschnitt zuletzt, damit Zoom und Overlays im Ausschnitt so liegen wie in der Vorschau
+    // Crop last, so zoom and overlays sit inside the crop just like in the preview
     val crop = p.crop.map(c =>
       s"crop=trunc(iw*${num(c.w)}/2)*2:trunc(ih*${num(c.h)}/2)*2:trunc(iw*${num(c.x)}):trunc(ih*${num(c.y)}),"
     ).getOrElse("")
     filters += s"${current}${crop}format=yuv420p[vout]"
 
-    // Tonspur: Abschnitte mit Versatz auf eine stille Grundspur in Videolänge mischen
+    // Audio track: mix the offset segments onto a silent base track as long as the video
     val audioLabels =
       if (p.output == "video") Nil
       else addAudio(p, paths, total, audioAvailable, args => addInput(args: _*), filters)
@@ -164,7 +164,7 @@ object EditRenderer {
       encoderArgs ++ Seq("-b:v", s"${p.preset.bitrate}k", "-t", num(total), "-movflags", "+faststart", "-f", "mp4", outPath)
   }
 
-  /** Nur Ton: ganze Tonspur des Projekts als MP3 (auch Ton hinter dem Videoende). None, wenn das Projekt keinen Ton hat. */
+  /** Audio only: the project's whole audio track as MP3 (including audio after the video ends). None if the project has no audio. */
   def buildAudioCommand(
     p: EditProject,
     paths: Map[String, String],
@@ -183,7 +183,7 @@ object EditRenderer {
         "-c:a", "libmp3lame", "-b:a", s"${FFmpegUtils.AudioOnlyBitrateKbps}k", "-t", num(total), "-f", "mp3", outPath))
   }
 
-  // Fügt die Ton-Eingänge und den Mix [aout] hinzu; liefert die Labels der Abschnitte (leer = kein Ton)
+  // Adds the audio inputs and the mix [aout]; returns the segment labels (empty = no audio)
   private def addAudio(
     p: EditProject,
     paths: Map[String, String],
@@ -224,14 +224,14 @@ object EditRenderer {
     if (p.output == "audio") {
       return buildAudioCommand(p, paths, audioAvailable, outPath) match {
         case Some(cmd) => FFmpegUtils.run(cmd)
-        case None => Left("Das Projekt hat keinen Ton.")
+        case None => Left("The project has no audio.")
       }
     }
 
     def run(useGpu: Boolean) =
       FFmpegUtils.run(buildCommand(p, paths, overlayFiles, sourceFps, audioAvailable, outPath, useGpu))
 
-    // Filter laufen auf der CPU, kodiert wird per NVENC falls vorhanden
+    // Filters run on the CPU, encoding uses NVENC if available
     if (FFmpegUtils.gpuAvailable) {
       run(useGpu = true) match {
         case Left(error) =>

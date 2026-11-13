@@ -1,30 +1,30 @@
-//! Reine Logik rund um ffmpeg: Programme finden, ffprobe auswerten,
-//! Argumente bauen, Fortschritt lesen. Ohne Prozesse, damit alles testbar ist.
+//! Pure logic around ffmpeg: find the programs, parse ffprobe output,
+//! build arguments, read progress. No processes, so everything is testable.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub const SW_ENCODER: &str = "libx264";
-/// Muss zu AUDIO_KBPS im Frontend und VideoCalculator.AudioBitrateKbps im Backend passen
+/// Must match AUDIO_KBPS in the frontend and VideoCalculator.AudioBitrateKbps in the backend
 const DEFAULT_AUDIO_KBPS: u32 = 128;
-/// Wie FFmpegUtils.AudioOnlyBitrateKbps im Backend
+/// Like FFmpegUtils.AudioOnlyBitrateKbps in the backend
 pub const AUDIO_ONLY_KBPS: u32 = 192;
 
-/// Hardware-Encoder (H.264) in der Reihenfolge, in der sie probiert werden.
-/// Ob einer wirklich funktioniert, prüft ein kurzer Test-Encode (siehe lib.rs):
-/// ffmpeg listet z. B. h264_nvenc auch ohne NVIDIA-Karte.
+/// Hardware encoders (H.264) in the order they are tried.
+/// Whether one really works is checked with a short test encode (see lib.rs):
+/// ffmpeg lists e.g. h264_nvenc even without an NVIDIA card.
 pub const HWS: &[&str] = &[
     "h264_videotoolbox", // Apple
     "h264_nvenc",        // NVIDIA
     "h264_qsv",          // Intel Quick Sync
     "h264_amf",          // AMD
-    "h264_vaapi",        // Linux: Intel und AMD über VA-API
+    "h264_vaapi",        // Linux: Intel and AMD via VA-API
 ];
 
-/// Hardware-Familien (Suffix im ffmpeg-Namen) in Probier-Reihenfolge, wie HWS
+/// Hardware families (suffix of the ffmpeg name) in the order they are tried, like HWS
 pub const FAMILIES: &[&str] = &["videotoolbox", "nvenc", "qsv", "amf", "vaapi"];
 
-/// VA-API braucht ein Grafikgerät; Standard ist die erste Karte, `TRIMLY_VAAPI_DEVICE` wählt eine andere.
+/// VA-API needs a graphics device; the default is the first card, `TRIMLY_VAAPI_DEVICE` picks another.
 pub fn vaapi_device() -> String {
     std::env::var("TRIMLY_VAAPI_DEVICE").unwrap_or_else(|_| "/dev/dri/renderD128".into())
 }
@@ -33,7 +33,7 @@ fn is_vaapi(encoder: &str) -> bool {
     encoder.ends_with("_vaapi")
 }
 
-/// Globale Optionen vor den Eingaben (VA-API: Gerät öffnen)
+/// Global options before the inputs (VA-API: open the device)
 pub fn hw_init_args(encoder: &str) -> Vec<String> {
     if is_vaapi(encoder) {
         vec!["-vaapi_device".into(), vaapi_device()]
@@ -42,7 +42,7 @@ pub fn hw_init_args(encoder: &str) -> Vec<String> {
     }
 }
 
-/// Letzter Filter vor dem Encoder: VA-API kodiert nur Bilder im Grafikspeicher (NV12)
+/// Last filter before the encoder: VA-API only encodes frames in GPU memory (NV12)
 pub fn final_format_filter(encoder: &str) -> &'static str {
     if is_vaapi(encoder) {
         "format=nv12,hwupload"
@@ -51,7 +51,7 @@ pub fn final_format_filter(encoder: &str) -> &'static str {
     }
 }
 
-/// Pixelformat der Ausgabe; bei VA-API legt das schon der Upload-Filter fest
+/// Output pixel format; with VA-API the upload filter already sets it
 pub fn pix_fmt_args(encoder: &str) -> &'static [&'static str] {
     if is_vaapi(encoder) {
         &[]
@@ -59,29 +59,29 @@ pub fn pix_fmt_args(encoder: &str) -> &'static [&'static str] {
         &["-pix_fmt", "yuv420p"]
     }
 }
-/// Ausgabe-Codecs; nur H.264 gibt es auch in Software (libx264)
+/// Output codecs; only H.264 is also available in software (libx264)
 pub const CODECS: &[&str] = &["h264", "hevc", "av1"];
 
-/// ffmpeg-Encoder für Familie + Codec, z. B. ("amf", "av1") → "av1_amf". "cpu" gibt es nur für H.264.
+/// ffmpeg encoder for family + codec, e.g. ("amf", "av1") → "av1_amf". "cpu" only exists for H.264.
 pub fn encoder_for(family: &str, codec: &str) -> Option<String> {
     match (family, codec) {
         ("cpu", "h264") => Some(SW_ENCODER.to_string()),
         ("cpu", _) => None,
-        // VideoToolbox kodiert kein AV1
+        // VideoToolbox doesn't encode AV1
         ("videotoolbox", "av1") => None,
         (f, c) if FAMILIES.contains(&f) && CODECS.contains(&c) => Some(format!("{c}_{f}")),
         _ => None,
     }
 }
 
-/// Familie eines Encoders ("h264_amf" → "amf", "libx264" → "cpu")
+/// Family of an encoder ("h264_amf" → "amf", "libx264" → "cpu")
 pub fn family_of(encoder: &str) -> &str {
     encoder.rsplit_once('_').map(|(_, f)| f).filter(|f| FAMILIES.contains(f)).unwrap_or("cpu")
 }
 
-/// Wählt den Encoder aus den getesteten (`working`, Probier-Reihenfolge) nach Wunsch-Codec und
-/// -Gerät ("auto", "cpu" oder eine Familie). Fällt erst auf eine andere Hardware mit diesem Codec,
-/// dann auf H.264 zurück; libx264 geht immer.
+/// Picks the encoder from the tested ones (`working`, in try order) by preferred codec and
+/// device ("auto", "cpu" or a family). Falls back first to other hardware with this codec,
+/// then to H.264; libx264 always works.
 pub fn pick_encoder(working: &[String], codec: &str, preference: &str) -> String {
     let has = |e: &str| working.iter().any(|w| w == e);
     let wanted_family = |f: &str| encoder_for(f, codec).filter(|e| has(e));
@@ -92,7 +92,7 @@ pub fn pick_encoder(working: &[String], codec: &str, preference: &str) -> String
         if let Some(e) = wanted_family(preference) {
             return e;
         }
-        // Gewähltes Gerät kann den Codec nicht: dort wenigstens H.264
+        // The chosen device can't do the codec: at least H.264 there
         if codec != "h264" {
             if let Some(e) = encoder_for(preference, "h264").filter(|e| has(e)) {
                 return e;
@@ -106,7 +106,7 @@ pub fn pick_encoder(working: &[String], codec: &str, preference: &str) -> String
         .unwrap_or_else(|| SW_ENCODER.to_string())
 }
 
-/// Alle Hardware-Encoder, die `ffmpeg -encoders` kennt (jeder Codec), in Probier-Reihenfolge.
+/// All hardware encoders `ffmpeg -encoders` knows (any codec), in try order.
 pub fn listed_hw_encoders_all(encoders_listing: &str) -> Vec<String> {
     let listed: Vec<&str> = encoders_listing.lines().filter_map(|l| l.split_whitespace().nth(1)).collect();
     FAMILIES
@@ -116,16 +116,16 @@ pub fn listed_hw_encoders_all(encoders_listing: &str) -> Vec<String> {
         .collect()
 }
 
-/// Sucht ein Programm: zuerst das mitgelieferte neben der Trimly-Programmdatei
-/// (Tauri `externalBin`, siehe scripts/build-ffmpeg.sh), dann im PATH und in den
-/// üblichen Installationsordnern. Aus dem Finder gestartete Apps erben den PATH der Shell nicht.
+/// Finds a program: first the bundled one next to the Trimly executable
+/// (Tauri `externalBin`, see scripts/build-ffmpeg.sh), then in PATH and in the
+/// usual install folders. Apps started from the Finder don't inherit the shell's PATH.
 pub fn find_tool(name: &str) -> Option<PathBuf> {
     let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
     let bundled = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
     let mut dirs: Vec<PathBuf> = bundled.into_iter().collect();
     dirs.extend(std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).unwrap_or_default());
     if cfg!(windows) {
-        // winget legt Verknüpfungen hier ab; viele Anleitungen entpacken nach C:\ffmpeg
+        // winget puts links here; many guides unpack to C:\ffmpeg
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
             dirs.push(PathBuf::from(local).join("Microsoft").join("WinGet").join("Links"));
         }
@@ -139,7 +139,7 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(&file)).find(|p| p.is_file())
 }
 
-/// Hardware-Encoder, die ffmpeg laut `ffmpeg -encoders` kennt, in Probier-Reihenfolge.
+/// Hardware encoders ffmpeg knows according to `ffmpeg -encoders`, in try order.
 pub fn listed_hw_encoders(encoders_listing: &str) -> Vec<&'static str> {
     let listed: Vec<&str> = encoders_listing
         .lines()
@@ -148,17 +148,17 @@ pub fn listed_hw_encoders(encoders_listing: &str) -> Vec<&'static str> {
     HWS.iter().copied().filter(|e| listed.contains(e)).collect()
 }
 
-/// Encoder-spezifische Einstellungen.
+/// Encoder-specific settings.
 pub fn encoder_args(encoder: &str) -> &'static [&'static str] {
     match encoder {
         "libx264" => &["-preset", "veryfast"],
-        // hvc1: Apple-Player (QuickTime, iOS) spielen HEVC in MP4 nur mit diesem Tag
+        // hvc1: Apple players (QuickTime, iOS) only play HEVC in MP4 with this tag
         "hevc_nvenc" => &["-preset", "p4", "-bf", "0", "-tag:v", "hvc1"],
         "hevc_qsv" => &["-preset", "veryfast", "-tag:v", "hvc1"],
         "hevc_amf" => &["-quality", "speed", "-tag:v", "hvc1"],
         "hevc_videotoolbox" | "hevc_vaapi" => &["-tag:v", "hvc1"],
-        // -bf 0: NVENC mit B-Frames verschiebt bei 29,97-fps-Quellen die Zeitstempel,
-        // viele Player zeigen dann nur ein graues Bild (siehe Backend FFmpegUtils)
+        // -bf 0: with B-frames NVENC shifts the timestamps of 29.97 fps sources,
+        // and many players then show only a grey picture (see FFmpegUtils in the backend)
         e if e.ends_with("_nvenc") => &["-preset", "p4", "-bf", "0"],
         e if e.ends_with("_qsv") => &["-preset", "veryfast"],
         e if e.ends_with("_amf") => &["-quality", "speed"],
@@ -166,9 +166,9 @@ pub fn encoder_args(encoder: &str) -> &'static [&'static str] {
     }
 }
 
-/// Argumente für einen winzigen Test-Encode, der zeigt, ob ein Encoder auf diesem Rechner läuft.
+/// Arguments for a tiny test encode that shows whether an encoder works on this machine.
 pub fn encoder_test_args(encoder: &str) -> Vec<String> {
-    // 640×480: hevc_amf lehnt kleinere Bilder ab (320×240 scheitert auf einer RX 9070 XT)
+    // 640×480: hevc_amf rejects smaller frames (320×240 fails on an RX 9070 XT)
     let mut a: Vec<String> = vec!["-v".into(), "error".into()];
     a.extend(hw_init_args(encoder));
     a.extend(["-f", "lavfi", "-i", "color=size=640x480:duration=0.2"].iter().map(|s| s.to_string()));
@@ -185,7 +185,7 @@ pub fn is_hardware(encoder: &str) -> bool {
     family_of(encoder) != "cpu"
 }
 
-/// Lesbarer Name des Geräts für die Oberfläche.
+/// Readable device name for the UI.
 pub fn family_label(family: &str) -> &'static str {
     match family {
         "videotoolbox" => "Apple VideoToolbox",
@@ -197,7 +197,7 @@ pub fn family_label(family: &str) -> &'static str {
     }
 }
 
-/// Lesbarer Name eines Encoders, z. B. "AMD AMF" (H.264 bleibt ohne Zusatz) oder "AMD AMF, AV1".
+/// Readable encoder name, e.g. "AMD AMF" (H.264 has no suffix) or "AMD AMF, AV1".
 pub fn encoder_label(encoder: &str) -> String {
     let family = family_label(family_of(encoder));
     match encoder.split('_').next() {
@@ -216,9 +216,9 @@ pub struct VideoInfo {
     pub height: u32,
     pub fps: f64,
     pub has_audio: bool,
-    /// Bitrate der Videospur in kbit/s, 0 wenn unbekannt
+    /// Bitrate of the video track in kbit/s, 0 if unknown
     pub video_kbps: u32,
-    /// Bitrate der Tonspuren in kbit/s, 0 wenn unbekannt
+    /// Bitrate of the audio tracks in kbit/s, 0 if unknown
     pub audio_kbps: u32,
 }
 
@@ -240,10 +240,10 @@ fn str_num<T: std::str::FromStr>(v: Option<&serde_json::Value>) -> Option<T> {
     v.and_then(|v| v.as_str()).and_then(|s| s.parse().ok())
 }
 
-/// Endungen, die Trimly öffnen soll (wie `fileAssociations` in tauri.conf.json)
+/// Extensions Trimly is meant to open (like `fileAssociations` in tauri.conf.json)
 const KNOWN_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "mkv", "webm", "avi"];
 
-/// Meldung, wenn ffprobe die Datei gar nicht lesen kann.
+/// Message when ffprobe can't read the file at all.
 pub fn unreadable_file_message(path: &str) -> String {
     let ext = std::path::Path::new(path)
         .extension()
@@ -256,8 +256,8 @@ pub fn unreadable_file_message(path: &str) -> String {
     }
 }
 
-/// Codec-Namen mit Dekodier-Unterstützung aus `ffmpeg -codecs`.
-/// Zeilen wie ` DEV.LS h264   H.264 / AVC …`; das erste Zeichen ist 'D', wenn ffmpeg dekodieren kann.
+/// Codec names with decoding support from `ffmpeg -codecs`.
+/// Lines like ` DEV.LS h264   H.264 / AVC …`; the first character is 'D' if ffmpeg can decode it.
 pub fn parse_decodable_codecs(listing: &str) -> std::collections::HashSet<String> {
     listing
         .lines()
@@ -272,7 +272,7 @@ pub fn parse_decodable_codecs(listing: &str) -> std::collections::HashSet<String
         .collect()
 }
 
-/// Name für die Fehlermeldung: ffprobe-Langname mit Kurzname, z. B. „Windows Media Video 9 (wmv3)“
+/// Name for the error message: ffprobe long name with short name, e.g. "Windows Media Video 9 (wmv3)"
 fn codec_label(stream: &serde_json::Value) -> String {
     let name = stream["codec_name"].as_str().unwrap_or("unknown");
     match stream["codec_long_name"].as_str() {
@@ -281,7 +281,7 @@ fn codec_label(stream: &serde_json::Value) -> String {
     }
 }
 
-/// Prüft, ob ffmpeg Bild und Ton dieser Datei dekodieren kann. Err mit einer Meldung für die Oberfläche.
+/// Checks whether ffmpeg can decode the picture and sound of this file. Err with a message for the UI.
 pub fn check_decodable(json: &str, decodable: &std::collections::HashSet<String>) -> Result<(), String> {
     let v: serde_json::Value = serde_json::from_str(json).map_err(|_| "ffprobe returned an unreadable answer.".to_string())?;
     let streams = v["streams"].as_array().cloned().unwrap_or_default();
@@ -298,7 +298,7 @@ pub fn check_decodable(json: &str, decodable: &std::collections::HashSet<String>
             ));
         }
     }
-    // Ton: build_args übernimmt alle Tonspuren (-map 0:a?), also alle prüfen
+    // Audio: build_args keeps all audio tracks (-map 0:a?), so check all of them
     if let Some(audio) = streams.iter().find(|s| s["codec_type"] == "audio" && !supported(s)) {
         if !supported(audio) {
             return Err(format!(
@@ -310,7 +310,7 @@ pub fn check_decodable(json: &str, decodable: &std::collections::HashSet<String>
     Ok(())
 }
 
-/// Wertet `ffprobe -print_format json -show_format -show_streams` aus.
+/// Parses `ffprobe -print_format json -show_format -show_streams`.
 pub fn parse_probe(json: &str) -> Result<VideoInfo, String> {
     let v: serde_json::Value =
         serde_json::from_str(json).map_err(|_| "ffprobe returned an unreadable answer.".to_string())?;
@@ -332,7 +332,7 @@ pub fn parse_probe(json: &str) -> Result<VideoInfo, String> {
         .or_else(|| video["r_frame_rate"].as_str().map(parse_rate))
         .unwrap_or(0.0);
 
-    // Videobitrate: aus der Spur, sonst Gesamtbitrate minus Ton
+    // Video bitrate: from the track, otherwise the total bitrate minus audio
     let audio_bps: f64 = streams
         .iter()
         .filter(|s| s["codec_type"] == "audio")
@@ -359,36 +359,36 @@ pub fn parse_probe(json: &str) -> Result<VideoInfo, String> {
 pub struct ExportRequest {
     pub input: String,
     pub output: String,
-    /// Sekunden
+    /// seconds
     pub start: f64,
-    /// Sekunden
+    /// seconds
     pub end: f64,
     pub volume: f64,
-    /// Nur schneiden, Videospur nicht neu kodieren
+    /// Trim only, don't re-encode the video track
     pub copy: bool,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub fps: Option<f64>,
     /// kbit/s
     pub bitrate: Option<u32>,
-    /// kbit/s für AAC, Standard 128
+    /// kbit/s for AAC, default 128
     #[serde(default)]
     pub audio_bitrate: Option<u32>,
-    /// "both" (Standard), "video" (ohne Ton) oder "audio" (nur Ton als MP3)
+    /// "both" (default), "video" (no audio) or "audio" (audio only, as MP3)
     #[serde(default = "default_streams")]
     pub streams: String,
-    /// "h264" (Standard), "hevc" oder "av1"
+    /// "h264" (default), "hevc" or "av1"
     #[serde(default = "default_codec")]
     pub codec: String,
-    /// Wunsch-Gerät: "auto" (Standard), "cpu" oder eine Familie wie "amf"
+    /// Preferred device: "auto" (default), "cpu" or a family like "amf"
     #[serde(default = "default_auto")]
     pub encoder: String,
-    /// Zielgröße in Bytes (Modus „Target size“): größere Ergebnisse werden mit weniger Bitrate neu kodiert
+    /// Target size in bytes ("Target size" mode): larger results are re-encoded with less bitrate
     #[serde(default)]
     pub max_bytes: Option<u64>,
 }
 
-/// Freier Zuschnitt relativ zum Bild (0..1), genutzt vom Editor (edit.rs)
+/// Free crop relative to the frame (0..1), used by the editor (edit.rs)
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct Crop {
     pub x: f64,
@@ -398,7 +398,7 @@ pub struct Crop {
 }
 
 impl Crop {
-    /// ffmpeg-Filter mit geraden Kanten, unabhängig von der Quellauflösung
+    /// ffmpeg filter with even edges, independent of the source resolution
     pub fn filter(&self) -> String {
         format!(
             "crop=trunc(iw*{w}/2)*2:trunc(ih*{h}/2)*2:trunc(iw*{x}):trunc(ih*{y})",
@@ -415,8 +415,8 @@ impl Crop {
     }
 }
 
-/// Neue Videobitrate, wenn eine Datei `actual` Bytes statt höchstens `max` hat. Hardware-Encoder wie AMF
-/// überschreiten die Bitrate um 10–20 %, darum skaliert Trimly mit 3 % Puffer nach.
+/// New video bitrate when a file has `actual` bytes instead of at most `max`. Hardware encoders like AMF
+/// overshoot the bitrate by 10–20 %, so Trimly scales down with a 3 % buffer.
 pub fn shrink_bitrate(bitrate: u32, actual: u64, max: u64) -> u32 {
     if actual == 0 || actual <= max {
         return bitrate;
@@ -444,12 +444,12 @@ impl ExportRequest {
 }
 
 fn num(v: f64) -> String {
-    // ffmpeg mag keine Exponentialschreibweise; 3 Nachkommastellen reichen für ms
+    // ffmpeg doesn't like exponent notation; 3 decimals are enough for ms
     let s = format!("{v:.3}");
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-/// Baut die ffmpeg-Argumente (ohne den Programmnamen).
+/// Builds the ffmpeg arguments (without the program name).
 pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, String> {
     if req.start < 0.0 {
         return Err("The start can't be negative.".into());
@@ -481,7 +481,7 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
     let with_audio = req.streams != "video";
 
     if req.streams == "audio" {
-        // Nur die Tonspur des Ausschnitts als MP3
+        // Only the audio of the selection as MP3
         push(&["-map", "0:a:0", "-vn", "-af", &volume_filter, "-c:a", "libmp3lame"]);
         push(&["-b:a", &format!("{AUDIO_ONLY_KBPS}k"), "-f", "mp3", &req.output]);
         return Ok(a);
@@ -534,12 +534,12 @@ pub fn build_args(req: &ExportRequest, encoder: &str) -> Result<Vec<String>, Str
     Ok(a)
 }
 
-/// Liest eine Zeile von `-progress pipe:1` und liefert den Anteil 0–1.
+/// Reads a line of `-progress pipe:1` and returns the fraction 0–1.
 pub fn progress_from_line(line: &str, clip_seconds: f64) -> Option<f64> {
     let (key, value) = line.trim().split_once('=')?;
     match key {
         "out_time_us" | "out_time_ms" => {
-            // out_time_ms ist trotz Namen ebenfalls in Mikrosekunden
+            // despite its name, out_time_ms is also in microseconds
             let us: f64 = value.parse().ok()?;
             if clip_seconds <= 0.0 || us < 0.0 {
                 return None;
@@ -586,7 +586,7 @@ mod tests {
     #[test]
     fn shrinks_bitrate_only_when_the_file_is_too_big() {
         assert_eq!(shrink_bitrate(15000, 9_000_000, 10_000_000), 15000);
-        // 17 % zu groß → knapp 17 % weniger, mit Puffer
+        // 17 % too big → a bit under 17 % less, with buffer
         let b = shrink_bitrate(15000, 11_700_000, 10_000_000);
         assert!((12000..=12500).contains(&b), "{b}");
         assert_eq!(shrink_bitrate(100, 100_000_000, 1), 50);
@@ -614,13 +614,13 @@ mod tests {
         let amd = strings(&["h264_amf", "hevc_amf", "av1_amf"]);
         assert_eq!(pick_encoder(&amd, "av1", "auto"), "av1_amf");
         assert_eq!(pick_encoder(&amd, "av1", "cpu"), "libx264");
-        // Gewähltes Gerät fehlt: automatisch
+        // Chosen device missing: automatic
         assert_eq!(pick_encoder(&amd, "hevc", "nvenc"), "hevc_amf");
-        // Gerät kann kein AV1: dort H.264
+        // Device can't do AV1: H.264 there
         let nv = strings(&["h264_nvenc", "hevc_nvenc"]);
         assert_eq!(pick_encoder(&nv, "av1", "nvenc"), "h264_nvenc");
         assert_eq!(pick_encoder(&nv, "av1", "auto"), "h264_nvenc");
-        // Gar keine Hardware
+        // No hardware at all
         assert_eq!(pick_encoder(&[], "av1", "auto"), "libx264");
     }
 
@@ -668,7 +668,7 @@ mod tests {
         assert!(s.starts_with("-hide_banner -nostats -y -progress pipe:1 -vaapi_device /dev/dri/renderD128 -ss"), "{s}");
         assert!(s.contains("-vf scale=1280:720,format=nv12,hwupload"), "{s}");
         assert!(!s.contains("-pix_fmt"), "{s}");
-        // Nur schneiden braucht kein Gerät
+        // Trimming only needs no device
         let copy = ExportRequest { copy: true, ..request() };
         assert!(!joined(&build_args(&copy, "h264_vaapi").unwrap()).contains("vaapi_device"));
         let t = encoder_test_args("h264_vaapi").join(" ");
@@ -761,8 +761,8 @@ mod tests {
         assert!(s.contains("-vf scale=1280:720"));
         assert!(s.contains("-fpsmax 30"));
         assert!(s.contains("-c:v h264_videotoolbox -b:v 2500k"));
-        assert!(!s.contains("-preset"), "VideoToolbox kennt kein -preset");
-        assert!(!s.contains("volume="), "Lautstärke 1 braucht keinen Filter");
+        assert!(!s.contains("-preset"), "VideoToolbox has no -preset");
+        assert!(!s.contains("volume="), "volume 1 needs no filter");
         assert!(s.contains("-progress pipe:1"));
         assert_eq!(args.last().unwrap(), "/v/out.mp4");
     }
@@ -844,7 +844,7 @@ mod tests {
         let set = parse_decodable_codecs(CODECS_LISTING);
         assert!(set.contains("h264") && set.contains("aac"));
         assert!(!set.contains("ffv1") && !set.contains("dts"));
-        // Legende vor „-------“ zählt nicht
+        // The legend before "-------" doesn't count
         assert!(!set.contains("="));
     }
 
@@ -866,7 +866,7 @@ mod tests {
         let err = check_decodable(&probe_json("ffv1", "aac"), &set).unwrap_err();
         assert!(err.contains("video's format: Long ffv1 (ffv1)"), "{err}");
 
-        // auch eine zweite Tonspur wird geprüft (Export übernimmt alle)
+        // a second audio track is checked too (the export keeps all of them)
         let err = check_decodable(&probe_json("h264", "dts"), &set).unwrap_err();
         assert!(err.contains("sound format: Long dts (dts)"), "{err}");
     }

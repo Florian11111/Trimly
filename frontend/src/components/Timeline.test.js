@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import Timeline from "./Timeline";
 
-// jsdom kennt kein PointerEvent; ohne Polyfill fehlt clientX
+// jsdom has no PointerEvent; without a polyfill clientX is missing
 if (!window.PointerEvent) {
   window.PointerEvent = class PointerEvent extends MouseEvent {
     constructor(type, params = {}) {
@@ -11,7 +11,7 @@ if (!window.PointerEvent) {
   };
 }
 
-// Streifen ist 1000 px breit und 10 s lang: 1 px = 0,01 s
+// The strip is 1000 px wide and 10 s long: 1 px = 0.01 s
 beforeAll(() => {
   Element.prototype.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 64, right: 1000, bottom: 64 });
 });

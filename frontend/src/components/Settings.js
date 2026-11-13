@@ -3,13 +3,13 @@ import { CODECS } from "../lib/presets";
 import { ACCENTS, THEMES } from "../lib/settings";
 
 /**
- * Kleines Einstellungsmenü unter dem Zahnrad in der Kopfzeile.
- * `encoders`: Geräte aus encoder_info ({ id, label, codecs }), nur Desktop.
+ * Small settings menu under the gear in the header.
+ * `encoders`: devices from encoder_info ({ id, label, codecs }), desktop only.
  */
 export default function Settings({ settings, update, desktop, encoders = [], onPickFolder, onClose }) {
   const ref = useRef(null);
 
-  // Escape und Klick daneben schließen
+  // Escape and a click outside close it
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
     const onDown = (e) => {

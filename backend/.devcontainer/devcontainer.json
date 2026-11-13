@@ -1,8 +1,8 @@
 {
   "name": "Scala Play Framework Dev Container",
   "build": {
-    "dockerfile": "../Dockerfile",     // Pfad zum übergeordneten Dockerfile
-    "context": ".."                     // Kontext muss übereinstimmen
+    "dockerfile": "../Dockerfile",     // Path to the parent Dockerfile
+    "context": ".."                     // Context must match
   },
   "settings": {
     "terminal.integrated.shell.linux": "/bin/bash"

@@ -4,7 +4,7 @@ import App from "./App";
 let xhr;
 
 beforeEach(() => {
-  // jsdom kennt weder Blob-URLs noch echte Uploads
+  // jsdom knows neither blob URLs nor real uploads
   global.URL.createObjectURL = jest.fn(() => "blob:test");
   global.URL.revokeObjectURL = jest.fn();
   xhr = { open: jest.fn(), send: jest.fn(), upload: {} };
@@ -19,7 +19,7 @@ const video = () => new File(["x"], "clip.mp4", { type: "video/mp4" });
 
 async function renderReady() {
   render(<App />);
-  // Plattform wird asynchron geladen; danach ist der Knopf aktiv
+  // The platform loads asynchronously; then the button is enabled
   await waitFor(() => expect(screen.getByRole("button", { name: "Choose video" })).toBeEnabled());
 }
 
@@ -102,7 +102,7 @@ test("opening a second video replaces the first without passing through the star
 
   expect(seen).toEqual([]);
   expect(screen.queryByText("clip.mp4")).not.toBeInTheDocument();
-  // Einstellungen des alten Videos sind weg
+  // The old video's settings are gone
   expect(screen.getByLabelText("With sound")).toBeChecked();
 });
 
@@ -150,7 +150,7 @@ test("several changes are undone one after another", async () => {
     expect(screen.getByLabelText("25 MB")).toBeChecked();
     fireEvent.keyDown(window, { code: "KeyZ", ctrlKey: true });
     expect(screen.getByLabelText("Compress")).toBeChecked();
-    // Strg+Umschalt+Z wiederholt
+    // Ctrl+Shift+Z redoes
     fireEvent.keyDown(window, { code: "KeyZ", ctrlKey: true, shiftKey: true });
     expect(screen.getByRole("radio", { name: "Target size" })).toBeChecked();
   } finally {
@@ -174,7 +174,7 @@ test("settings switch the theme and remember it", async () => {
   fireEvent.click(screen.getByLabelText("Green"));
   expect(document.documentElement.dataset.accent).toBe("green");
   expect(JSON.parse(window.localStorage.getItem("trimly.settings"))).toMatchObject({ theme: "light", accent: "green" });
-  // Desktop-Einstellungen gibt es im Browser nicht
+  // Desktop settings don't exist in the browser
   expect(screen.queryByText("Save exports to")).not.toBeInTheDocument();
   fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByRole("dialog", { name: "Settings" })).not.toBeInTheDocument();
@@ -186,19 +186,19 @@ test("the web version switches to the editor and back without losing the trim vi
 
   fireEvent.click(screen.getByRole("tab", { name: "Editor" }));
   expect(screen.getByRole("tab", { name: "Editor" })).toHaveAttribute("aria-selected", "true");
-  // jsdom lädt keine Videodaten, daher zeigt der Editor seinen Wartehinweis
-  // (der Editor wird nachgeladen, darum findBy)
+  // jsdom loads no video data, so the editor shows its waiting hint
+  // (the editor is lazy-loaded, hence findBy)
   expect(await screen.findByText(/Load a video in the Trim tab first/)).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("tab", { name: "Trim" }));
   expect(screen.getByLabelText("No sound")).toBeChecked();
 });
 
-// ─── „Nur berechnen“ und Player-Lautstärke ──────────────────────────────
+// ─── "Compute only" and player volume ──────────────────────────────────
 
 async function renderWithLoadedVideo() {
   await renderWithVideo();
-  // Upload bestätigen
+  // Confirm the upload
   xhr.responseText = JSON.stringify({ status: "success", originalId: "orig-1" });
   act(() => xhr.onload());
   const el = document.querySelector("video");

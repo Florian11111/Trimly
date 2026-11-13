@@ -8,7 +8,7 @@ import { fileExtension, fileStem } from "../lib/format";
 
 const VIDEO_EXTENSIONS = ["mp4", "mov", "m4v", "mkv", "webm", "avi"];
 
-// Windows-Pfade nutzen „\\“, macOS „/“
+// Windows paths use "\\", macOS "/"
 const lastSep = (path) => Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
 const baseName = (path) => path.slice(lastSep(path) + 1);
 const dirName = (path) => path.slice(0, lastSep(path) + 1);
@@ -16,7 +16,7 @@ const joinPath = (dir, name) => (/[\\/]$/.test(dir) ? dir + name : `${dir}${dir.
 
 const asError = (e) => (e instanceof Error ? e : new Error(String(e)));
 
-// PNG-Blob → Base64 ohne „data:“-Präfix (Rust dekodiert es in render_edit)
+// PNG blob → Base64 without the "data:" prefix (Rust decodes it in render_edit)
 const blobToBase64 = (blob) =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -26,11 +26,11 @@ const blobToBase64 = (blob) =>
   });
 
 /**
- * Speichert ein Export-Ergebnis:
- * - Standard-Ordner gesetzt (und nicht `askLocation`): direkt dorthin, freier Dateiname.
- * - Sonst startet der Export sofort in eine Temp-Datei, während der Speichern-Dialog offen ist,
- *   und wird danach verschoben. Abbrechen im Dialog bricht auch den Export ab.
- * `start(outputPath)` startet den Rust-Befehl und liefert dessen Promise.
+ * Saves an export result:
+ * - Default folder set (and not `askLocation`): straight there, with a free file name.
+ * - Otherwise the export starts right away into a temp file while the save dialog is open,
+ *   and is moved afterwards. Cancelling the dialog also cancels the export.
+ * `start(outputPath)` starts the Rust command and returns its promise.
  */
 async function saveExport({ name, ext, kind, sourceDir, settings, askLocation }, start) {
   const fileName = `${name}.${ext}`;
@@ -44,7 +44,7 @@ async function saveExport({ name, ext, kind, sourceDir, settings, askLocation },
 
   const temp = await invoke("temp_output", { ext });
   const running = start(temp);
-  // Fehler erst nach dem Dialog melden, aber nicht als „unhandled“ verlieren
+  // Report errors only after the dialog, but don't lose them as "unhandled"
   running.catch(() => {});
 
   const dest = await save({
@@ -69,7 +69,7 @@ const progressChannel = (onProgress) => {
   return channel;
 };
 
-// Dateiname, Endung und Startordner eines Trim-Exports
+// File name, extension and start folder of a trim export
 function trimTarget(video, { target, output }) {
   return {
     name: `${fileStem(video.name)}_trim`,
@@ -108,7 +108,7 @@ export function createDesktopPlatform() {
     kind: "desktop",
 
     async pick() {
-      // Erster Dialog startet im Videos-Ordner, danach merkt sich das System den letzten
+      // The first dialog starts in the Videos folder, after that the system remembers the last one
       const defaultPath = await videoDir().catch(() => undefined);
       const path = await open({
         multiple: false,
@@ -130,7 +130,7 @@ export function createDesktopPlatform() {
       let src;
       try {
         info = await invoke("probe", { path });
-        // Eigener lokaler Server statt Asset-Protokoll, siehe media_server.rs
+        // Own local server instead of the asset protocol, see media_server.rs
         src = await invoke("media_url", { path });
       } catch (e) {
         throw asError(e);
@@ -154,8 +154,8 @@ export function createDesktopPlatform() {
       }
     },
 
-    // „Nur berechnen“: in eine Temp-Datei kodieren, um die genaue Größe zu kennen.
-    // saveComputed legt sie danach ohne neues Kodieren ab, discardComputed löscht sie.
+    // "Compute only": encode into a temp file to know the exact size.
+    // saveComputed then saves it without encoding again, discardComputed deletes it.
     async computeVideo(video, job, { onProgress, settings } = {}) {
       const info = trimTarget(video, job);
       const temp = await invoke("temp_output", { ext: info.ext });
@@ -181,7 +181,7 @@ export function createDesktopPlatform() {
             defaultPath: joinPath(folder || sourceDir, fileName),
             filters: [{ name: kind, extensions: [ext] }],
           });
-          // Dialog abgebrochen: Ergebnis bleibt erhalten
+          // Dialog cancelled: the result is kept
           if (!dest) return null;
         }
         await invoke("finalize_export", { from: temp, to: dest });
@@ -195,7 +195,7 @@ export function createDesktopPlatform() {
       if (computed?.temp) await invoke("discard_temp", { path: computed.temp }).catch(() => {});
     },
 
-    // Editor-Export: Projekt aus buildRenderProject, Overlays als PNG-Blobs (overlay_0, overlay_1, …)
+    // Editor export: project from buildRenderProject, overlays as PNG blobs (overlay_0, overlay_1, …)
     async renderEdit({ project, overlays, name, output: outputMode, sourcePath, settings }, { onProgress } = {}) {
       try {
         const encoded = await Promise.all(overlays.map(blobToBase64));
@@ -222,19 +222,19 @@ export function createDesktopPlatform() {
       }
     },
 
-    // Datei, mit der die App gestartet wurde („Öffnen mit“, Doppelklick, Startargument)
+    // File the app was started with ("Open with", double-click, start argument)
     async initialFile() {
       return invoke("initial_file");
     },
 
-    // „Öffnen mit Trimly“, während die App schon läuft (macOS-Ereignis, Windows: zweiter Start)
+    // "Open with Trimly" while the app is already running (macOS event, Windows: second launch)
     async onOpenFile(handler) {
       return listen("open-file", () => {
         invoke("initial_file").then((path) => path && handler(path));
       });
     },
 
-    // macOS-Menü „File › Open New File…“ (⌘O), siehe lib.rs
+    // macOS menu "File › Open New File…" (⌘O), see lib.rs
     async onMenuOpen(handler) {
       return listen("menu-open", () => handler());
     },

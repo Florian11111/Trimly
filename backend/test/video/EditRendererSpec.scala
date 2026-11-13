@@ -14,7 +14,7 @@ class EditRendererSpec extends AnyFunSuite {
   private def probe(file: File, args: String*): String =
     (Seq("ffprobe", "-v", "error") ++ args :+ file.getAbsolutePath).!!.trim
 
-  // RGB-Wert eines Pixels zum Zeitpunkt t
+  // RGB value of a pixel at time t
   private def pixel(file: File, t: Double, x: Int, y: Int): Seq[Int] = {
     val bytes = new java.io.ByteArrayOutputStream()
     (Seq("ffmpeg", "-v", "error", "-ss", t.toString, "-i", file.getAbsolutePath, "-frames:v", "1",
@@ -48,7 +48,7 @@ class EditRendererSpec extends AnyFunSuite {
     assert(probe(out, "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0") == "audio")
     assert(probe(out, "-select_streams", "v", "-show_entries", "stream=width,height", "-of", "csv=p=0") == "640,360")
 
-    // Overlay nur zwischen 0.5s und 1.5s sichtbar (gelb oben links)
+    // Overlay only visible between 0.5 s and 1.5 s (yellow, top left)
     val during = pixel(out, 1.0, 50, 50)
     val after = pixel(out, 2.5, 50, 50)
     assert(during(0) > 200 && during(1) > 200 && during(2) < 80, s"during=$during")
@@ -59,7 +59,7 @@ class EditRendererSpec extends AnyFunSuite {
 
   test("speed changes the length of video and linked audio") {
     val out = File.createTempFile("edit_speed", ".mp4")
-    // 4 s in doppeltem Tempo (2 s) + 1 s in halbem Tempo (2 s) = 4 s
+    // 4 s at double speed (2 s) + 1 s at half speed (2 s) = 4 s
     val project = EditProject(preset,
       Seq(EditVideoSeg("a", 2, 6, speed = 2), EditVideoSeg("a", 10, 11, speed = 0.5)),
       Seq(EditAudioSeg("a", 2, 6, at = 0, volume = 1, speed = 2), EditAudioSeg("a", 10, 11, at = 2, volume = 1, speed = 0.5)),
@@ -76,18 +76,18 @@ class EditRendererSpec extends AnyFunSuite {
     assert(EditRenderer.atempo(4) == ",atempo=2,atempo=2")
     assert(EditRenderer.atempo(0.25) == ",atempo=0.5,atempo=0.5")
     val tooFast = EditProject(preset, Seq(EditVideoSeg("a", 0, 1, speed = 8)), Seq.empty, Seq.empty, Seq.empty)
-    assert(EditRenderer.validate(tooFast, Map.empty).exists(_.contains("Tempo")))
+    assert(EditRenderer.validate(tooFast, Map.empty).exists(_.contains("Speed")))
   }
 
   test("crop makes a portrait video from the landscape frame") {
     val out = File.createTempFile("edit_crop", ".mp4")
-    // 640×360, mittiger Streifen mit 9:16 → 202×360 (gerade Kanten)
+    // 640×360, centred 9:16 strip → 202×360 (even edges)
     val project = EditProject(preset, Seq(EditVideoSeg("a", 1, 2)), Seq.empty, Seq.empty, Seq.empty,
       crop = Some(EditCrop(0.342, 0, 0.316, 1)))
     val result = EditRenderer.render(project, paths, Map.empty, out.getAbsolutePath)
     assert(result.isRight, result)
     assert(probe(out, "-select_streams", "v", "-show_entries", "stream=width,height", "-of", "csv=p=0") == "202,360")
-    assert(EditRenderer.validate(project.copy(crop = Some(EditCrop(0.9, 0, 0.5, 1))), Map.empty).contains("Ungültiger Zuschnitt."))
+    assert(EditRenderer.validate(project.copy(crop = Some(EditCrop(0.9, 0, 0.5, 1))), Map.empty).contains("Invalid crop."))
     out.delete()
   }
 

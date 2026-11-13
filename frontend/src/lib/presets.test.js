@@ -104,7 +104,7 @@ describe("resolveSizeTarget", () => {
   test("picks a resolution that suits the bitrate", () => {
     // 10 MB in 60 s ≈ 1,2 Mbit/s → 480p
     expect(resolveSizeTarget(10, 60, landscape).height).toBe(480);
-    // 100 MB in 20 s ≈ 39 Mbit/s → volle 1440p mit 60 fps
+    // 100 MB in 20 s ≈ 39 Mbit/s → full 1440p at 60 fps
     expect(resolveSizeTarget(100, 20, landscape)).toMatchObject({ height: 1440, fps: 60 });
   });
 
@@ -133,7 +133,7 @@ describe("resolveSizeTarget", () => {
 describe("estimateBytes", () => {
   test("uses video plus audio bitrate for encoded output", () => {
     const target = { copy: false, bitrate: 2500 };
-    // (2500 + 128) kbit/s * 8 s / 8 = 2 628 000 Bytes
+    // (2500 + 128) kbit/s * 8 s / 8 = 2 628 000 bytes
     expect(estimateBytes(target, 8, landscape)).toBe(2_628_000);
   });
 
@@ -158,7 +158,7 @@ test("unknown preset ids fall back to medium", () => {
 
 test("sourceVideoKbps prefers ffprobe and otherwise estimates from size", () => {
   expect(sourceVideoKbps({ videoKbps: 103 }, 1, 1)).toBe(103);
-  // 113 MB in 5448 s ≈ 174 kbit/s gesamt, minus 128 kbit/s Ton
+  // 113 MB in 5448 s ≈ 174 kbit/s in total, minus 128 kbit/s audio
   expect(sourceVideoKbps(null, 118_506_018, 5448)).toBe(46);
   expect(sourceVideoKbps(null, 0, 0)).toBe(0);
 });

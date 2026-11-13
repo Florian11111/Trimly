@@ -1,5 +1,5 @@
-//! Ruft das echte ffmpeg mit dem Testvideo aus dem Backend auf.
-//! Wird übersprungen, wenn ffmpeg oder das Video fehlen.
+//! Runs the real ffmpeg on the test video from the backend.
+//! Skipped if ffmpeg or the video is missing.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -14,7 +14,7 @@ fn setup() -> Option<(PathBuf, PathBuf, PathBuf)> {
     let (Some(ff), Some(probe), Some(video)) =
         (ffmpeg::find_tool("ffmpeg"), ffmpeg::find_tool("ffprobe"), test_video())
     else {
-        eprintln!("übersprungen: ffmpeg, ffprobe oder Testvideo fehlt");
+        eprintln!("skipped: ffmpeg, ffprobe or test video missing");
         return None;
     };
     Some((ff, probe, video))
@@ -29,7 +29,7 @@ fn probe(ffprobe: &PathBuf, path: &PathBuf) -> VideoInfo {
     ffmpeg::parse_probe(&String::from_utf8_lossy(&out.stdout)).unwrap()
 }
 
-/// Erster Hardware-Encoder, der auf diesem Rechner wirklich läuft, sonst libx264
+/// First hardware encoder that actually works on this machine, otherwise libx264
 fn encoder(ff: &PathBuf) -> &'static str {
     let out = Command::new(ff).args(["-hide_banner", "-encoders"]).output().unwrap();
     ffmpeg::listed_hw_encoders(&String::from_utf8_lossy(&out.stdout))
@@ -41,7 +41,7 @@ fn encoder(ff: &PathBuf) -> &'static str {
 fn run(ff: &PathBuf, req: &ExportRequest, enc: &str) {
     let args = ffmpeg::build_args(req, enc).unwrap();
     let out = Command::new(ff).args(&args).output().unwrap();
-    assert!(out.status.success(), "ffmpeg fehlgeschlagen: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(out.status.success(), "ffmpeg failed: {}", String::from_utf8_lossy(&out.stderr));
 }
 
 fn out_path(name: &str) -> PathBuf {
@@ -84,7 +84,7 @@ fn encodes_scaled_trimmed_clip() {
     let info = probe(&ffprobe, &output);
     assert_eq!((info.width, info.height), (640, 360));
     assert!((info.fps - 30.0).abs() < 0.5, "fps {}", info.fps);
-    assert!((info.duration - 2.0).abs() < 0.3, "Länge {}", info.duration);
+    assert!((info.duration - 2.0).abs() < 0.3, "length {}", info.duration);
     assert!(info.has_audio);
     let _ = std::fs::remove_file(output);
 }
@@ -140,8 +140,8 @@ fn copy_mode_keeps_resolution_and_cuts_length() {
 
     let info = probe(&ffprobe, &output);
     assert_eq!((info.width, info.height), (2560, 1440));
-    // Schnitt ohne Neukodierung landet auf Keyframes, daher großzügige Toleranz
-    assert!(info.duration > 7.0 && info.duration < 10.5, "Länge {}", info.duration);
+    // Cutting without re-encoding lands on keyframes, hence the generous tolerance
+    assert!(info.duration > 7.0 && info.duration < 10.5, "length {}", info.duration);
     let _ = std::fs::remove_file(output);
 }
 
@@ -190,7 +190,7 @@ fn exports_audio_only_as_mp3_and_video_without_audio() {
     let _ = std::fs::remove_file(silent);
 }
 
-/// Editor-Export wie render_edit: zwei Abschnitte, Zoom, PNG-Overlay, zwei Tonspuren gemischt
+/// Editor export like render_edit: two segments, zoom, PNG overlay, two audio tracks mixed
 #[test]
 fn renders_editor_project_with_zoom_overlay_and_audio_mix() {
     use base64::Engine;
@@ -199,7 +199,7 @@ fn renders_editor_project_with_zoom_overlay_and_audio_mix() {
     let Some((ff, ffprobe, video)) = setup() else { return };
     let v = video.display().to_string().replace('\\', "\\\\");
 
-    // 1×1 transparentes PNG, ffmpeg skaliert es auf Ausgabegröße
+    // 1×1 transparent PNG, ffmpeg scales it to the output size
     let png = out_path("overlay.png");
     let bytes = base64::engine::general_purpose::STANDARD
         .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
@@ -221,17 +221,17 @@ fn renders_editor_project_with_zoom_overlay_and_audio_mix() {
     let out = out_path("edit.mp4");
     let args = edit::build_video_args(&project, &files, 60.0, &|_| true, encoder(&ff), &out.display().to_string());
     let res = Command::new(&ff).args(&args).output().unwrap();
-    assert!(res.status.success(), "ffmpeg fehlgeschlagen: {}", String::from_utf8_lossy(&res.stderr));
+    assert!(res.status.success(), "ffmpeg failed: {}", String::from_utf8_lossy(&res.stderr));
 
     let info = probe(&ffprobe, &out);
     assert_eq!((info.width, info.height), (640, 360));
-    assert!((info.duration - 2.5).abs() < 0.15, "Dauer {}", info.duration);
+    assert!((info.duration - 2.5).abs() < 0.15, "duration {}", info.duration);
     assert!(info.has_audio);
     let _ = std::fs::remove_file(&out);
     let _ = std::fs::remove_file(&png);
 }
 
-/// HEVC und AV1 mit jeder Hardware, die es auf diesem Rechner kann (sonst nichts zu prüfen)
+/// HEVC and AV1 with every hardware encoder that supports them on this machine (otherwise nothing to check)
 #[test]
 fn encodes_hevc_and_av1_with_available_hardware() {
     let Some((ff, ffprobe, video)) = setup() else { return };
@@ -242,7 +242,7 @@ fn encodes_hevc_and_av1_with_available_hardware() {
         .filter(|e| Command::new(&ff).args(ffmpeg::encoder_test_args(e)).status().is_ok_and(|s| s.success()))
         .collect();
     if working.is_empty() {
-        eprintln!("übersprungen: keine HEVC/AV1-Hardware");
+        eprintln!("skipped: no HEVC/AV1 hardware");
         return;
     }
     for enc in working {
@@ -267,12 +267,12 @@ fn encodes_hevc_and_av1_with_available_hardware() {
         run(&ff, &req, &enc);
         let info = probe(&ffprobe, &output);
         assert_eq!((info.width, info.height), (640, 360), "{enc}");
-        assert!((info.duration - 2.0).abs() < 0.15, "{enc}: Dauer {}", info.duration);
+        assert!((info.duration - 2.0).abs() < 0.15, "{enc}: duration {}", info.duration);
         let _ = std::fs::remove_file(output);
     }
 }
 
-/// Editor mit Tempo: 2 s Quelle in 2× (1 s) + 1 s in 0,5× (2 s) = 3 s, Ton läuft mit
+/// Editor with speed: 2 s of source at 2× (1 s) + 1 s at 0.5× (2 s) = 3 s, audio follows
 #[test]
 fn renders_editor_speed_changes() {
     use std::collections::HashMap;
@@ -292,14 +292,14 @@ fn renders_editor_speed_changes() {
     let out = out_path("speed.mp4");
     let args = edit::build_video_args(&project, &files, 60.0, &|_| true, encoder(&ff), &out.display().to_string());
     let res = Command::new(&ff).args(&args).output().unwrap();
-    assert!(res.status.success(), "ffmpeg fehlgeschlagen: {}", String::from_utf8_lossy(&res.stderr));
+    assert!(res.status.success(), "ffmpeg failed: {}", String::from_utf8_lossy(&res.stderr));
     let info = probe(&ffprobe, &out);
-    assert!((info.duration - 3.0).abs() < 0.15, "Dauer {}", info.duration);
+    assert!((info.duration - 3.0).abs() < 0.15, "duration {}", info.duration);
     assert!(info.has_audio);
     let _ = std::fs::remove_file(&out);
 }
 
-/// Editor-Zuschnitt: Hochformat-Streifen aus dem 640×360-Ausgabebild → 202×360
+/// Editor crop: portrait strip from the 640×360 output frame → 202×360
 #[test]
 fn renders_editor_crop() {
     use std::collections::HashMap;
@@ -317,7 +317,7 @@ fn renders_editor_crop() {
     let out = out_path("editcrop.mp4");
     let args = edit::build_video_args(&project, &files, 60.0, &|_| true, encoder(&ff), &out.display().to_string());
     let res = Command::new(&ff).args(&args).output().unwrap();
-    assert!(res.status.success(), "ffmpeg fehlgeschlagen: {}", String::from_utf8_lossy(&res.stderr));
+    assert!(res.status.success(), "ffmpeg failed: {}", String::from_utf8_lossy(&res.stderr));
     let info = probe(&ffprobe, &out);
     assert_eq!((info.width, info.height), (202, 360));
     let _ = std::fs::remove_file(&out);

@@ -1,12 +1,12 @@
-// Gemeinsame Geometrie für Vorschau und Export.
-// Alle Positionen sind relativ zum Ausgabebild (0..1), Größen relativ zur Bildhöhe.
+// Shared geometry for preview and export.
+// All positions are relative to the output frame (0..1), sizes relative to the frame height.
 
-export const ZOOM_RAMP = 0.3; // muss zu EditRenderer.ZoomRamp im Backend passen
+export const ZOOM_RAMP = 0.3; // must match EditRenderer.ZoomRamp in the backend
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-// Zoomzustand zum Zeitpunkt t: Faktor und sichtbarer Bereich (oben links, relativ)
-// Gleiche Formel wie der zoompan-Ausdruck im Backend.
+// Zoom state at time t: factor and visible area (top left, relative)
+// Same formula as the zoompan expression in the backend.
 export function zoomAt(zooms, t) {
   let z = 1;
   let cx = 0.5;
@@ -54,7 +54,7 @@ function drawArrow(ctx, o, W, H) {
 
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  // dunkle Kontur, damit der Pfeil auf jedem Hintergrund sichtbar ist
+  // dark outline, so the arrow is visible on any background
   ctx.strokeStyle = "rgba(0,0,0,0.75)";
   ctx.lineWidth = lw + Math.max(2, lw * 0.5);
   path();
@@ -104,7 +104,7 @@ export function drawOverlay(ctx, o, W, H, images) {
   ctx.restore();
 }
 
-// Bounding-Box in Pixeln (für Auswahl-Rahmen und Treffer-Erkennung)
+// Bounding box in pixels (for the selection frame and hit testing)
 export function overlayBox(ctx, o, W, H, images) {
   if (o.type === "arrow") {
     return {
@@ -132,8 +132,8 @@ function distToSegment(px, py, x1, y1, x2, y2) {
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
 
-// Was liegt unter dem Punkt? Liefert {mode} oder null.
-// mode: "move" | "p1" | "p2" (Pfeilenden) | "resize" (Bild unten rechts)
+// What is under the point? Returns {mode} or null.
+// mode: "move" | "p1" | "p2" (arrow ends) | "resize" (image, bottom right)
 export function hitOverlay(ctx, o, px, py, W, H, images) {
   const grab = 12;
   if (o.type === "arrow") {
@@ -148,7 +148,7 @@ export function hitOverlay(ctx, o, px, py, W, H, images) {
   return null;
 }
 
-// Zoom-Rechteck: Höhe = Breite (relativ), da gleiches Seitenverhältnis wie das Bild
+// Zoom rectangle: height = width (relative), as it has the same aspect ratio as the frame
 export function hitZoom(zm, px, py, W, H) {
   const x = zm.x * W, y = zm.y * H, w = zm.w * W, h = zm.w * H;
   if (Math.hypot(px - (x + w), py - (y + h)) < 14) return { mode: "resize" };
@@ -156,7 +156,7 @@ export function hitZoom(zm, px, py, W, H) {
   return null;
 }
 
-// Ein Overlay als PNG in Ausgabegröße rendern (für den Export)
+// Render an overlay as a PNG in output size (for the export)
 export function renderOverlayPng(o, W, H, images) {
   const canvas = document.createElement("canvas");
   canvas.width = W;

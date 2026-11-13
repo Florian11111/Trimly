@@ -23,10 +23,10 @@
   position: relative;
   flex: 1;
   min-width: 0;
-  /* Bild bleibt 16:9, darf aber nur so hoch werden, dass Steuerung, Timeline und Export
-     (zusammen gut 400 px plus Kopfzeile) noch ins Fenster passen – sonst rutschen sie
-     im maximierten Fenster unter den Rand. Breite statt Höhe begrenzen, damit die
-     Overlay-Koordinaten (relativ zum 16:9-Rahmen) stimmen. */
+  /* The picture stays 16:9 but may only grow so tall that controls, timeline and export
+     (together a good 400 px plus the header) still fit in the window – otherwise they slide
+     below the edge in a maximised window. Limit the width rather than the height, so the
+     overlay coordinates (relative to the 16:9 frame) stay correct. */
   max-width: max(320px, calc((100vh - 440px) * 16 / 9));
   background: rgba(0, 0, 0, 0.55);
   border-radius: 8px;
@@ -260,7 +260,7 @@
   position: sticky;
   left: 0;
   z-index: 3;
-  width: 80px; /* = LABEL_W in Timeline.js, Playhead und Klicks rechnen damit */
+  width: 80px; /* = LABEL_W in Timeline.js, playhead and clicks use it */
   box-sizing: border-box;
   flex-shrink: 0;
   padding: 0 8px;
@@ -288,7 +288,7 @@
 
 .tl-item {
   position: absolute;
-  color: #fff; /* farbige Spuren, auch im hellen Design weiße Schrift */
+  color: #fff; /* coloured tracks, white text even in the light theme */
   height: 24px;
   border-radius: 4px;
   box-sizing: border-box;

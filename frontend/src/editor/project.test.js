@@ -14,12 +14,12 @@ test('split video at playhead keeps total length', () => {
 test('linked audio follows video cuts, detached audio stays put', () => {
   let p = P.splitVideoAt(base(), 4);
   p = P.removeItem(p, 'video', p.videoSegs[0].id);
-  // verbunden: Ton des gelöschten Teils ist ebenfalls weg
+  // linked: the audio of the deleted part is gone too
   expect(P.effectiveAudio(p)).toEqual([expect.objectContaining({ srcStart: 4, srcEnd: 10, tlStart: 0 })]);
 
   let d = P.detachAudio(P.splitVideoAt(base(), 4));
   d = P.removeItem(d, 'video', d.videoSegs[0].id);
-  // getrennt: Tonspur bleibt komplett erhalten
+  // detached: the audio track stays complete
   expect(P.effectiveAudio(d)).toHaveLength(2);
   expect(P.effectiveAudio(d)[1]).toMatchObject({ srcStart: 4, tlStart: 4 });
 });
@@ -31,7 +31,7 @@ test('detached audio can be split and moved independently', () => {
   expect(p.audioSegs.map(s => [s.srcStart, s.srcEnd, s.tlStart])).toEqual([[0, 3, 0], [3, 10, 3]]);
   const moved = P.dragPatch('audio', 'move', p.audioSegs[1], 2, { clipDuration: 10, total: 10 });
   expect(moved).toEqual({ tlStart: 5 });
-  // Video unverändert
+  // video unchanged
   expect(p.videoSegs).toHaveLength(1);
 });
 
@@ -80,7 +80,7 @@ test('zoomAt ramps in and out like the backend expression', () => {
 });
 
 test('audio-only export keeps detached audio that lies behind the video end', () => {
-  // Ton getrennt, dann Video auf 1 s gekürzt: Ton bleibt bei 0..10 s, Ton-Abschnitt ab 4 s
+  // audio detached, then video trimmed to 1 s: audio stays at 0..10 s, audio segment from 4 s
   let p = P.detachAudio(base());
   p = P.updateItem(p, 'video', p.videoSegs[0].id, { srcEnd: 1 });
   p = P.updateItem(p, 'audio', p.audioSegs[0].id, { srcStart: 4, tlStart: 4 });
@@ -96,7 +96,7 @@ test('audio-only export keeps detached audio that lies behind the video end', ()
 test('speed changes the timeline length, linked audio follows', () => {
   let p = P.splitVideoAt(base(), 4);
   p = P.updateItem(p, 'video', p.videoSegs[1].id, { speed: 2 });
-  // 4 s normal + 6 s doppelt so schnell = 7 s
+  // 4 s normal + 6 s at double speed = 7 s
   expect(P.totalDuration(p)).toBe(7);
   expect(P.layoutVideo(p.videoSegs)[1]).toMatchObject({ tlStart: 4, len: 3 });
   expect(P.effectiveAudio(p)[1]).toMatchObject({ tlStart: 4, speed: 2 });
@@ -106,7 +106,7 @@ test('speed changes the timeline length, linked audio follows', () => {
 test('splitting a fast segment cuts at the right source time', () => {
   let p = P.updateItem(base(), 'video', base().videoSegs[0].id, { speed: 2 });
   p = P.updateItem(p, 'video', p.videoSegs[0].id, { speed: 2 });
-  p = P.splitVideoAt(p, 2); // 2 s auf der Timeline = 4 s im Clip
+  p = P.splitVideoAt(p, 2); // 2 s on the timeline = 4 s in the clip
   expect(p.videoSegs[0]).toMatchObject({ srcStart: 0, srcEnd: 4, speed: 2 });
   expect(p.videoSegs[1]).toMatchObject({ srcStart: 4, srcEnd: 10, speed: 2 });
 });

@@ -26,7 +26,7 @@
   user-select: none;
 }
 
-/* Platz für die Ampel-Knöpfe bei der transparenten macOS-Titelleiste (Windows hat eine normale) */
+/* Room for the traffic-light buttons in the transparent macOS title bar (Windows has a normal one) */
 .is-desktop.is-mac .topbar {
   padding-left: 84px;
 }
@@ -58,7 +58,7 @@
   white-space: nowrap;
 }
 
-/* ─── Knöpfe ───────────────────────────────────────────────────────────── */
+/* ─── Buttons ──────────────────────────────────────────────────────────── */
 
 .btn {
   display: inline-flex;
@@ -92,7 +92,7 @@
   box-shadow: 0 10px 34px -8px rgba(var(--accent-rgb), 0.95);
 }
 
-/* Nach dem Export: Knopf tritt zurück, bis sich etwas ändert */
+/* After an export: the button steps back until something changes */
 .btn-primary.is-done {
   background: var(--raised);
   color: var(--text);
@@ -141,7 +141,7 @@
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  /* im Dunklen hell abgesetzt statt schwarz, damit der Umschalter als solcher erkennbar ist */
+  /* lighter instead of black in dark mode, so the switch is recognisable as one */
   background: var(--raised);
 }
 
@@ -182,7 +182,7 @@
   min-width: 0;
 }
 
-/* ─── Leerer Zustand ───────────────────────────────────────────────────── */
+/* ─── Empty state ──────────────────────────────────────────────────────── */
 
 .empty {
   flex: 1;
@@ -236,7 +236,7 @@
   box-shadow: inset 0 0 0 2px var(--trim);
 }
 
-/* ─── Arbeitsfläche ────────────────────────────────────────────────────── */
+/* ─── Workspace ────────────────────────────────────────────────────────── */
 
 .workspace {
   flex: 1;
@@ -275,12 +275,12 @@
   cursor: pointer;
 }
 
-/* ─── Zuschneiden (freies Format) ─────────────────────────────────────── */
+/* ─── Crop (free shape) ────────────────────────────────────────────────── */
 
 .crop-layer {
   position: absolute;
   overflow: hidden;
-  pointer-events: none; /* außerhalb des Bearbeitens startet ein Klick weiter die Wiedergabe */
+  pointer-events: none; /* outside of editing, a click still starts playback */
 }
 
 .crop-layer.is-editing {
@@ -299,7 +299,7 @@
   cursor: move;
 }
 
-/* Drittel-Raster als Orientierung */
+/* Rule-of-thirds grid as a guide */
 .crop-grid {
   position: absolute;
   inset: 0;
@@ -414,7 +414,7 @@ kbd {
 
 /* ─── Timeline ─────────────────────────────────────────────────────────── */
 
-/* Die Griffe sitzen 14 px außerhalb der Leiste; so schließt die Klammer bündig mit dem Player ab */
+/* The handles sit 14 px outside the bar, so the bracket lines up with the player */
 .timeline {
   padding: 0 14px;
 }
@@ -521,7 +521,7 @@ kbd {
   pointer-events: none;
 }
 
-/* ─── Export-Spalte ────────────────────────────────────────────────────── */
+/* ─── Export column ────────────────────────────────────────────────────── */
 
 .panel {
   display: flex;
@@ -816,7 +816,7 @@ input[type="range"] {
   color: var(--danger);
 }
 
-/* immer einzeilig; wird es doch zu eng, kürzt „…“ und der Tooltip zeigt alles */
+/* always one line; if it gets too narrow, "…" shortens it and the tooltip shows everything */
 .encoder {
   margin: 0;
   font-size: 12px;
@@ -826,7 +826,7 @@ input[type="range"] {
   text-overflow: ellipsis;
 }
 
-/* ─── Qualität: Modus-Umschalter mit kleinem Unterbereich ─────────────── */
+/* ─── Quality: mode switch with a small sub-panel ──────────────────────── */
 
 .mode-panel {
   display: flex;
@@ -907,7 +907,7 @@ fieldset:disabled .segment {
   margin-top: 0;
 }
 
-/* Export-Knopf mit kleinem Ordner-Knopf daneben („woanders speichern“) */
+/* Export button with a small folder button next to it ("save elsewhere") */
 .export-row {
   display: flex;
   gap: 8px;
@@ -919,7 +919,7 @@ fieldset:disabled .segment {
   height: 40px;
 }
 
-/* Kleiner Pfeil links vom Export-Knopf mit „Nur berechnen“ */
+/* Small arrow left of the export button with "Compute only" */
 .export-menu {
   position: relative;
   flex: none;
@@ -985,7 +985,7 @@ fieldset:disabled .segment {
   color: var(--accent-soft);
 }
 
-/* Lautstärke nur für den Player, neben der Zeit */
+/* Volume for the player only, next to the time */
 .player-volume {
   display: flex;
   align-items: center;
@@ -1006,10 +1006,10 @@ fieldset:disabled .segment {
   width: 76px;
 }
 
-/* ─── Einstellungen (Zahnrad) ──────────────────────────────────────────── */
+/* ─── Settings (gear) ──────────────────────────────────────────────────── */
 
-/* über Arbeitsfläche und Editor, damit das Einstellungsmenü nicht dahinter verschwindet
-   (.app > :not(.backdrop) setzt sonst z-index 1) */
+/* above the workspace and editor, so the settings menu doesn't disappear behind them
+   (.app > :not(.backdrop) would otherwise set z-index 1) */
 .app > .topbar {
   z-index: 5;
 }
@@ -1152,9 +1152,9 @@ fieldset:disabled .segment {
   outline-offset: 2px;
 }
 
-/* ─── Abfrage „Video ersetzen?“ ────────────────────────────────────────── */
+/* ─── "Replace video?" prompt ─────────────────────────────────────────── */
 
-/* .app > … gewinnt sonst mit position: relative (siehe .app > :not(.backdrop)) */
+/* otherwise .app > … wins with position: relative (see .app > :not(.backdrop)) */
 .app > .modal-backdrop,
 .modal-backdrop {
   position: fixed;
@@ -1206,7 +1206,7 @@ fieldset:disabled .segment {
   vertical-align: 1px;
 }
 
-/* ─── Schmale Fenster ──────────────────────────────────────────────────── */
+/* ─── Narrow windows ───────────────────────────────────────────────────── */
 
 @media (max-width: 860px) {
   .workspace {

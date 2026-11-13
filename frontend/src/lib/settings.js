@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-// Einstellungen der App, im localStorage des Fensters gespeichert (Tauri behält ihn dauerhaft).
-// encoder/codec/outputDir wirken nur in der Desktop-App, theme/accent überall.
+// App settings, stored in the window's localStorage (Tauri keeps it permanently).
+// encoder/codec/outputDir only apply in the desktop app, theme/accent everywhere.
 
 export const THEMES = [
   { id: "dark", label: "Dark" },
@@ -9,7 +9,7 @@ export const THEMES = [
   { id: "system", label: "System" },
 ];
 
-// Farbe für Aktionen, Schnittklammer und Hintergrund-Lichter (siehe index.css)
+// Colour for actions, the trim bracket and the background lights (see index.css)
 export const ACCENTS = [
   { id: "violet", label: "Violet", color: "#8a5cff" },
   { id: "blue", label: "Blue", color: "#3f8cff" },
@@ -22,7 +22,7 @@ export const DEFAULT_SETTINGS = {
   accent: "violet",
   codec: "h264", // h264 | hevc | av1
   encoder: "auto", // auto | cpu | amf | nvenc | qsv | videotoolbox | vaapi
-  outputDir: null, // null: jedes Mal fragen
+  outputDir: null, // null: ask every time
 };
 
 const KEY = "trimly.settings";
@@ -40,11 +40,11 @@ function saveSettings(settings) {
   try {
     window.localStorage.setItem(KEY, JSON.stringify(settings));
   } catch {
-    // privates Fenster o. Ä.: Einstellungen gelten dann nur bis zum Schließen
+    // private window or similar: settings then only last until it is closed
   }
 }
 
-/** Theme und Akzent als data-Attribute an <html>, damit index.css umschalten kann. */
+/** Theme and accent as data attributes on <html>, so index.css can switch. */
 export function applyAppearance({ theme, accent }) {
   const root = document.documentElement;
   const dark =
@@ -68,7 +68,7 @@ export function useSettings() {
   useEffect(() => {
     applyAppearance(settings);
     if (settings.theme !== "system" || !window.matchMedia) return undefined;
-    // „System“ folgt dem Wechsel zwischen hell und dunkel live
+    // "System" follows switches between light and dark live
     const query = window.matchMedia("(prefers-color-scheme: light)");
     const onChange = () => applyAppearance(settings);
     query.addEventListener?.("change", onChange);

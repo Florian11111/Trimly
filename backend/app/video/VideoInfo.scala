@@ -11,9 +11,9 @@ case class VideoConversion(
     height: Option[Int],
     volume: Option[Double],
     maxSizeMb: Option[Double] = None,
-    trimOnly: Boolean = false, // nur schneiden, nicht neu kodieren
-    removeAudio: Boolean = false, // Ausgabe ohne Tonspur
-    audioOnly: Boolean = false, // nur Tonspur als MP3
+    trimOnly: Boolean = false, // trim only, don't re-encode
+    removeAudio: Boolean = false, // output without audio track
+    audioOnly: Boolean = false, // audio track only, as MP3
 )
 
 case class VideoInfo(

@@ -1,49 +1,49 @@
-// Projektmodell des Editors (reine Funktionen, ohne React).
+// Project model of the editor (pure functions, no React).
 //
 // project = {
-//   clips:     { [clipId]: { url, name, duration } },   // Server-IDs separat (nicht im Undo-Verlauf)
-//   videoSegs: [{ id, clipId, srcStart, srcEnd, volume, speed }]          // laufen nacheinander
-//   audioSegs: null | [{ id, clipId, srcStart, srcEnd, tlStart, volume, speed }]  // null = mit Video verbunden
-// speed: Abspieltempo (fehlt = 1). Auf der Timeline dauert ein Abschnitt (srcEnd − srcStart) / speed.
+//   clips:     { [clipId]: { url, name, duration } },   // server IDs kept separately (not in the undo history)
+//   videoSegs: [{ id, clipId, srcStart, srcEnd, volume, speed }]          // play one after another
+//   audioSegs: null | [{ id, clipId, srcStart, srcEnd, tlStart, volume, speed }]  // null = linked to the video
+// speed: playback speed (missing = 1). On the timeline a segment lasts (srcEnd − srcStart) / speed.
 //   overlays:  [{ id, type: "arrow"|"text"|"image", start, end, ... }]
 //   zooms:     [{ id, start, end, x, y, w }]
 // }
 
-// Kürzester Abschnitt in Sekunden (Backend erlaubt ab 0.005)
+// Shortest segment in seconds (the backend allows from 0.005)
 export const MIN_LEN = 0.01;
 
 let nextId = 1;
 export const newId = (prefix) => `${prefix}${Date.now().toString(36)}_${nextId++}`;
 
-// crop: null | { x, y, w, h } relativ zum Ausgabebild (0..1), freies Format, gilt für das ganze Projekt
+// crop: null | { x, y, w, h } relative to the output frame (0..1), free shape, applies to the whole project
 export const emptyProject = () => ({ clips: {}, videoSegs: [], audioSegs: null, overlays: [], zooms: [], crop: null });
 
-// Ein Rahmen über das ganze Bild ist kein Zuschnitt
+// A box over the whole frame is no crop
 export const isCropped = (crop) =>
   !!crop && !(crop.x < 0.001 && crop.y < 0.001 && crop.w > 0.999 && crop.h > 0.999);
 
-// Ausgabegröße nach dem Zuschnitt, gerade Kanten wie in ffmpeg (trunc(iw*w/2)*2)
+// Output size after the crop, even edges as in ffmpeg (trunc(iw*w/2)*2)
 export const croppedSize = (width, height, crop) =>
   isCropped(crop)
     ? { width: Math.trunc((width * crop.w) / 2) * 2, height: Math.trunc((height * crop.h) / 2) * 2 }
     : { width, height };
 
-// Wählbares Tempo; ffmpeg rendert es mit setpts (Bild) und atempo (Ton, Tonhöhe bleibt)
+// Selectable speeds; ffmpeg renders them with setpts (video) and atempo (audio, pitch is kept)
 export const SPEEDS = [0.25, 0.5, 1, 1.5, 2, 4];
-// Grenzen müssen zu MIN_SPEED/MAX_SPEED in edit.rs und EditRenderer.scala passen
+// Limits must match MIN_SPEED/MAX_SPEED in edit.rs and EditRenderer.scala
 export const MIN_SPEED = 0.25;
 export const MAX_SPEED = 4;
-// Eigenes Tempo aus einer Eingabe: auf 0,01 gerundet und in die Grenzen geklemmt, ungültig → null
+// Custom speed from an input: rounded to 0.01 and clamped to the limits, invalid → null
 export const parseSpeed = (text) => {
   const v = parseFloat(String(text).replace(",", ".").replace(/[x×]\s*$/i, ""));
   if (!Number.isFinite(v) || v <= 0) return null;
   return Math.min(MAX_SPEED, Math.max(MIN_SPEED, Math.round(v * 100) / 100));
 };
 export const speedOf = (s) => (s.speed > 0 ? s.speed : 1);
-// Dauer eines Abschnitts auf der Timeline
+// Duration of a segment on the timeline
 export const segLen = (s) => (s.srcEnd - s.srcStart) / speedOf(s);
 
-// Videoabschnitte mit Position auf der Timeline
+// Video segments with their position on the timeline
 export function layoutVideo(videoSegs) {
   let t = 0;
   return videoSegs.map(s => {
@@ -57,7 +57,7 @@ export function layoutVideo(videoSegs) {
 export const totalDuration = (project) =>
   project.videoSegs.reduce((sum, s) => sum + segLen(s), 0);
 
-// Tonspur, wie sie abgespielt/exportiert wird: verbunden = folgt der Videospur
+// Audio track as played/exported: linked = follows the video track
 export function effectiveAudio(project) {
   if (project.audioSegs) return project.audioSegs;
   return layoutVideo(project.videoSegs).map(s => ({
@@ -73,7 +73,7 @@ export function addClip(project, clipId, clip) {
     ...project,
     clips: { ...project.clips, [clipId]: clip },
     videoSegs: [...project.videoSegs, seg],
-    // getrennte Tonspur: Ton des neuen Clips ans Ende legen
+    // detached audio track: put the new clip's audio at the end
     audioSegs: project.audioSegs && [
       ...project.audioSegs,
       { id: newId("a"), clipId, srcStart: 0, srcEnd: clip.duration, tlStart: total, volume: 1 },
@@ -81,7 +81,7 @@ export function addClip(project, clipId, clip) {
   };
 }
 
-// Videoabschnitt am Timeline-Zeitpunkt t teilen
+// Split the video segment at timeline time t
 export function splitVideoAt(project, t) {
   const layout = layoutVideo(project.videoSegs);
   const i = layout.findIndex(s => t > s.tlStart + MIN_LEN && t < s.tlStart + s.len - MIN_LEN);
@@ -95,7 +95,7 @@ export function splitVideoAt(project, t) {
   return { ...project, videoSegs };
 }
 
-// Abschnitt der getrennten Tonspur am Timeline-Zeitpunkt t teilen
+// Split the segment of the detached audio track at timeline time t
 export function splitAudioAt(project, segId, t) {
   if (!project.audioSegs) return project;
   const i = project.audioSegs.findIndex(s => s.id === segId);
@@ -127,7 +127,7 @@ export function moveVideoSeg(project, segId, dir) {
 
 export function removeItem(project, kind, id) {
   if (kind === "video") {
-    if (project.videoSegs.length <= 1) return project; // mindestens ein Abschnitt bleibt
+    if (project.videoSegs.length <= 1) return project; // at least one segment remains
     return { ...project, videoSegs: project.videoSegs.filter(s => s.id !== id) };
   }
   if (kind === "audio") return { ...project, audioSegs: (project.audioSegs || []).filter(s => s.id !== id) };
@@ -145,10 +145,10 @@ export function updateItem(project, kind, id, patch) {
   return project;
 }
 
-// Ziehen auf der Timeline: neue Werte aus dem Zustand bei Drag-Beginn (orig) + Verschiebung dt
+// Dragging on the timeline: new values from the state at drag start (orig) + offset dt
 export function dragPatch(kind, mode, orig, dt, ctx) {
   const clampv = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-  // dt ist Timeline-Zeit; im Clip entspricht das dt × Tempo
+  // dt is timeline time; in the clip that is dt × speed
   const sp = speedOf(orig);
   if (kind === "video") {
     const dur = ctx.clipDuration;
@@ -166,7 +166,7 @@ export function dragPatch(kind, mode, orig, dt, ctx) {
     if (mode === "end") return { srcEnd: clampv(orig.srcEnd + dt * sp, orig.srcStart + MIN_LEN, dur) };
     return null;
   }
-  // Overlay / Zoom: Zeitbereich innerhalb des Projekts
+  // Overlay / zoom: time range within the project
   const total = ctx.total;
   const len = orig.end - orig.start;
   if (mode === "move") {
@@ -178,8 +178,8 @@ export function dragPatch(kind, mode, orig, dt, ctx) {
   return null;
 }
 
-// Projekt für POST /render. Liefert auch die Overlays, die als overlay_<i>.png mitgeschickt werden müssen
-// (Einträge hinter dem Videoende fallen weg, beim reinen Ton-Export bleibt die ganze Tonspur).
+// Project for POST /render. Also returns the overlays that must be sent along as overlay_<i>.png
+// (entries after the video end are dropped; an audio-only export keeps the whole audio track).
 export function buildRenderProject(project, preset, originalIds, output = "both") {
   const total = totalDuration(project);
   const originalId = (clipId) => originalIds[clipId];
@@ -199,7 +199,7 @@ export function buildRenderProject(project, preset, originalIds, output = "both"
   return { body, overlays };
 }
 
-// Länge der Tonspur (Ende des letzten Ton-Abschnitts)
+// Length of the audio track (end of the last audio segment)
 export function audioDuration(project) {
   return Math.max(0, ...effectiveAudio(project).map(s => s.tlStart + segLen(s)));
 }

@@ -1,17 +1,17 @@
 @echo off
-rem Wechsel in das Verzeichnis des Skripts, damit docker-compose im Projektstamm läuft
+rem Change to the script's folder so docker compose runs in the project root
 cd /d "%~dp0"
 echo Starte Docker Compose...
 
-rem Mit NVIDIA-Karte GPU-Encoding aktivieren (siehe docker-compose.gpu.yml)
+rem With an NVIDIA card, enable GPU encoding (see docker-compose.gpu.yml)
 set "COMPOSE_FILES=-f docker-compose.yml"
 where nvidia-smi >nul 2>&1
 if %ERRORLEVEL% equ 0 (
-    echo NVIDIA-GPU gefunden, GPU-Encoding wird aktiviert.
+    echo NVIDIA GPU found, enabling GPU encoding.
     set "COMPOSE_FILES=-f docker-compose.yml -f docker-compose.gpu.yml"
 )
 
-rem Versuche zuerst den neuen Docker CLI-Befehl, sonst fallback auf docker-compose
+rem Try the newer docker compose command first, otherwise fall back to docker-compose
 docker compose version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     docker-compose %COMPOSE_FILES% up -d
@@ -21,14 +21,14 @@ if %ERRORLEVEL% neq 0 (
 
 if %ERRORLEVEL% neq 0 (
     echo.
-    echo Fehler: Docker Compose konnte nicht gestartet werden.
-    echo Stelle sicher, dass Docker Desktop laeuft und docker-compose installiert ist.
+    echo Error: Docker Compose could not be started.
+    echo Make sure Docker Desktop is running and docker-compose is installed.
     pause
     exit /b 1
 )
 
 echo.
-echo Warte auf Container-Start...
+echo Waiting for the containers to start...
 setlocal enabledelayedexpansion
 set "max_attempts=60"
 set "attempt=0"
@@ -39,7 +39,7 @@ set /a attempt=!attempt!+1
 if !attempt! gtr !max_attempts! (
     cls
     echo.
-    echo Warnung: Container-Startup hat zu lange gedauert.
+    echo Warning: the containers took too long to start.
     echo Versuche trotzdem, Browser zu oeffnen...
     goto open_browser
 )
@@ -54,21 +54,21 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo.
-echo Alle Container sind aktiv. Pruefen auf Backend (Port 9000)...
+echo All containers are running. Checking the backend (port 9000)...
 set "backend_attempts=0"
 
 :check_backend
 set /a backend_attempts=!backend_attempts!+1
 if !backend_attempts! gtr 30 (
     cls
-    echo Warnung: Backend reagiert nicht auf Port 9000.
+    echo Warning: the backend does not respond on port 9000.
     goto check_frontend
 )
 
 curl -s http://localhost:9000 >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     cls
-    echo Backend wird geladen !backend_attempts!/30 !ANIM_FRAME!
+    echo Loading backend !backend_attempts!/30 !ANIM_FRAME!
     call :animate_dot
     timeout /t 1 /nobreak >nul
     goto check_backend
@@ -77,21 +77,21 @@ if %ERRORLEVEL% neq 0 (
 echo Backend verfuegbar!
 
 echo.
-echo Pruefen auf Frontend-Verfuegbarkeit (Port 3000)...
+echo Checking the frontend (port 3000)...
 set "web_attempts=0"
 
 :check_frontend
 set /a web_attempts=!web_attempts!+1
 if !web_attempts! gtr 30 (
     cls
-    echo Warnung: Frontend reagiert nicht. Oeffne trotzdem Browser...
+    echo Warning: the frontend does not respond. Opening the browser anyway...
     goto open_browser
 )
 
 curl -s http://localhost:3000 >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     cls
-    echo Frontend wird geladen !web_attempts!/30 !ANIM_FRAME!
+    echo Loading frontend !web_attempts!/30 !ANIM_FRAME!
     call :animate_dot
     timeout /t 1 /nobreak >nul
     goto check_frontend
@@ -101,7 +101,7 @@ echo Frontend verfuegbar!
 
 :open_browser
 echo.
-echo Offne Browser auf http://localhost:3000
+echo Opening the browser at http://localhost:3000
 start "" "http://localhost:3000"
 exit /b 0
 

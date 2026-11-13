@@ -1,20 +1,20 @@
-# Mitgeliefertes ffmpeg
+# Bundled ffmpeg
 
-Hier legt `scripts/build-ffmpeg.sh` ein schlankes, statisch gelinktes `ffmpeg` und `ffprobe` ab
-(`ffmpeg-x86_64-pc-windows-msvc.exe` usw.). Tauri packt sie als `externalBin` in den Installer
-(Windows und macOS, siehe `tauri.windows.conf.json` und `tauri.macos.conf.json`); Trimly findet sie neben der eigenen Programmdatei.
+`scripts/build-ffmpeg.sh` puts a slim, statically linked `ffmpeg` and `ffprobe` here
+(`ffmpeg-x86_64-pc-windows-msvc.exe` etc.). Tauri packs them into the installer as `externalBin`
+(Windows and macOS, see `tauri.windows.conf.json` and `tauri.macos.conf.json`); Trimly finds them next to its own executable.
 
-Die Programme sind nicht im Git, weil sie erzeugt werden. Vor dem ersten Desktop-Build
-(auch `npm run desktop`) einmal ausführen, unter Windows in der MSYS2-Shell „UCRT64“, auf dem Mac
-nach `brew install nasm pkgconf meson ninja x264 lame mpg123`:
+The binaries are not in Git because they are generated. Run this once before the first desktop build
+(also before `npm run desktop`): on Windows in the MSYS2 "UCRT64" shell, on the Mac
+after `brew install nasm pkgconf meson ninja x264 lame mpg123`:
 
 ```bash
 cd frontend/src-tauri && bash scripts/build-ffmpeg.sh
 ```
 
-## Lizenz
+## License
 
-ffmpeg wird mit libx264 gebaut und steht damit unter der GPL (Version 3 wegen `--enable-version3`).
-Trimly ruft es nur als eigenständiges Programm auf. Wer den Installer weitergibt, muss auf den
-ffmpeg-Quellcode verweisen: https://ffmpeg.org/releases/ (Version im Build-Skript) und das
-Build-Skript selbst.
+ffmpeg is built with libx264 and is therefore under the GPL (version 3 because of `--enable-version3`).
+Trimly only calls it as a separate program. Anyone who redistributes the installer must point to the
+ffmpeg source code: https://ffmpeg.org/releases/ (version in the build script) and the
+build script itself.

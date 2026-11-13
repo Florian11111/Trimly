@@ -6,7 +6,7 @@ import * as P from "./project";
 import { drawOverlay, overlayBox, hitOverlay, hitZoom, zoomAt, isVisible, renderOverlayPng } from "./overlays";
 import CropOverlay from "../components/CropOverlay";
 
-// Muss zu VideoCalculator.AudioBitrateKbps bzw. FFmpegUtils.AudioOnlyBitrateKbps im Backend passen
+// Must match VideoCalculator.AudioBitrateKbps or FFmpegUtils.AudioOnlyBitrateKbps in the backend
 const AUDIO_KBPS = 128;
 const AUDIO_ONLY_KBPS = 192;
 const EXPORT_PRESETS = ["low", "medium", "high"];
@@ -23,7 +23,7 @@ const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const isTyping = (e) =>
   ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName) && !["range", "checkbox"].includes(e.target.type);
 
-// Freies Tempo (0,25–4): übernimmt bei Enter oder beim Verlassen, Escape verwirft
+// Free speed (0.25–4): applied on Enter or blur, Escape discards
 function SpeedInput({ value, onChange }) {
   const [draft, setDraft] = useState(null);
   const apply = () => {
@@ -48,12 +48,12 @@ function SpeedInput({ value, onChange }) {
   );
 }
 
-// platform: in der Desktop-App rendert Rust lokal (Clip-„ID“ = Dateipfad, kein Upload),
-// im Web geht alles über das Backend (`api`).
+// platform: in the desktop app Rust renders locally (clip "ID" = file path, no upload),
+// on the web everything goes through the backend (`api`).
 export default function Editor({ api, platform, settings, mainClip, ensureMainOriginal, active, formatFileSize }) {
   const desktop = platform?.kind === "desktop";
   const [project, setProject] = useState(P.emptyProject);
-  const [originalIds, setOriginalIds] = useState({}); // clipId -> Server-ID (nicht im Undo-Verlauf)
+  const [originalIds, setOriginalIds] = useState({}); // clipId -> server ID (not in the undo history)
   const [uploads, setUploads] = useState({});          // clipId -> Upload-Fortschritt in %
   const [selected, setSelected] = useState(null);      // { kind, id }
   const [time, setTime] = useState(0);
@@ -85,11 +85,11 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
   const dragOrigRef = useRef(null);
   const videoInputRef = useRef(null);
   const imageInputRef = useRef(null);
-  const clipUploadsRef = useRef({}); // clipId -> { file, promise } für erneutes Hochladen
+  const clipUploadsRef = useRef({}); // clipId -> { file, promise } for uploading again
 
   previewVolumeRef.current = previewVolume;
 
-  // ─── Projektänderungen + Rückgängig ──────────────────────────────────────
+  // ─── Project changes + undo ─────────────────────────────────────────────
 
   const setProjectNow = useCallback((next) => {
     projectRef.current = next;
@@ -99,12 +99,12 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     historyRef.current.push(projectRef.current);
     if (historyRef.current.length > 100) historyRef.current.shift();
   }, []);
-  // Änderung mit Eintrag im Verlauf
+  // Change with a history entry
   const commit = useCallback((fn) => {
     snapshot();
     setProjectNow(fn(projectRef.current));
   }, [snapshot, setProjectNow]);
-  // Änderung während des Ziehens (Verlaufseintrag wurde bei Drag-Beginn gemacht)
+  // Change while dragging (the history entry was made when the drag began)
   const live = useCallback((fn) => setProjectNow(fn(projectRef.current)), [setProjectNow]);
   const undo = useCallback(() => {
     const prev = historyRef.current.pop();
@@ -114,12 +114,12 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     }
   }, [setProjectNow]);
 
-  // Hauptvideo aus dem Schneiden-Tab übernehmen
+  // Take over the main video from the trim tab
   useEffect(() => {
     if (!mainClip || !mainClip.duration || Object.keys(projectRef.current.clips).length) return;
     setProjectNow(P.addClip(P.emptyProject(), "main", { url: mainClip.url, name: mainClip.name, duration: mainClip.duration }));
   }, [mainClip, setProjectNow]);
-  // Server-ID des Hauptvideos kann sich ändern, wenn der Schneiden-Tab es neu hochlädt
+  // The main video's server ID can change when the trim tab uploads it again
   const mainOriginalId = mainClip?.originalId;
   useEffect(() => {
     if (mainOriginalId) setOriginalIds(ids => (ids.main === mainOriginalId ? ids : { ...ids, main: mainOriginalId }));
@@ -131,7 +131,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
   const linked = !project.audioSegs;
   const exportDims = presetDims(exportPreset);
 
-  // ─── Wiedergabe: Uhr läuft unabhängig, Video und Ton werden nachgeführt ──
+  // ─── Playback: the clock runs independently, video and audio follow it ──
 
   const syncMedia = useCallback((t, isPlaying) => {
     const p = projectRef.current;
@@ -161,7 +161,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
       if (!isPlaying && !v.paused) v.pause();
     }
 
-    // Ton: ein Audio-Element pro Abschnitt der (ggf. getrennten) Tonspur
+    // Audio: one audio element per segment of the (possibly detached) audio track
     const els = audioElsRef.current;
     const alive = new Set();
     for (const s of P.effectiveAudio(p)) {
@@ -198,7 +198,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     }
   }, []);
 
-  // Timeline-Zeit des gerade angezeigten Videobilds, falls das Video im Abschnitt zur Zeit t läuft
+  // Timeline time of the frame currently shown, if the video is playing the segment at time t
   const videoTimelineTime = (t) => {
     const v = videoRef.current;
     if (!v || v.paused || v.seeking || v.readyState < 2) return null;
@@ -206,7 +206,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     const seg = P.layoutVideo(p.videoSegs).find(s => t >= s.tlStart && t < s.tlStart + s.len);
     if (!seg || p.clips[seg.clipId]?.url !== loadedUrlRef.current) return null;
     const vt = seg.tlStart + (v.currentTime - seg.srcStart) / P.speedOf(seg);
-    // Video steht noch am Ende des vorigen Abschnitts o.ä. -> Uhr behalten, syncMedia korrigiert
+    // The video is still at the end of the previous segment or similar -> keep the clock, syncMedia corrects it
     if (vt < seg.tlStart || vt >= seg.tlStart + seg.len || Math.abs(vt - t) > 0.25) return null;
     return vt;
   };
@@ -238,7 +238,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     const tick = () => {
       const tot = P.totalDuration(projectRef.current);
       let t = clockRef.current.t0 + (performance.now() - clockRef.current.start) / 1000;
-      // Läuft das Video im aktuellen Abschnitt, gibt es den Takt vor: Playhead (und damit „S“) = sichtbares Bild
+      // If the video plays the current segment, it sets the pace: playhead (and so "S") = visible frame
       const vt = videoTimelineTime(t);
       if (vt !== null) {
         t = vt;
@@ -256,17 +256,17 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     return () => cancelAnimationFrame(raf);
   }, [playing, syncMedia, seek]);
 
-  // Pausiert: Vorschau nach Sprüngen und Projektänderungen aktualisieren
+  // Paused: update the preview after seeks and project changes
   useEffect(() => {
     if (!playing) syncMedia(time, false);
   }, [time, project, playing, syncMedia]);
 
-  // Projekt kürzer geworden (z.B. Clip gelöscht): Playhead ans Ende setzen
+  // Project got shorter (e.g. clip deleted): move the playhead to the end
   useEffect(() => {
     if (time > total) seek(total);
   }, [time, total, seek]);
 
-  // Tab verlassen: anhalten
+  // Tab left: pause
   useEffect(() => {
     if (!active) setPlaying(false);
   }, [active]);
@@ -275,7 +275,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     Object.values(audioElsRef.current).forEach(({ el }) => el.pause());
   }, []);
 
-  // Originale auf dem Server aktiv halten, solange der Editor offen ist
+  // Keep the originals alive on the server while the editor is open
   useEffect(() => {
     const ids = Object.values(originalIds);
     if (desktop || !ids.length) return;
@@ -288,7 +288,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     return () => clearInterval(timer);
   }, [api, desktop, originalIds]);
 
-  // ─── Größen messen ───────────────────────────────────────────────────────
+  // ─── Measure sizes ──────────────────────────────────────────────────────
 
   useEffect(() => {
     if (typeof ResizeObserver === "undefined") return;
@@ -303,7 +303,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
 
   const pxPerSec = total > 0 ? ((rootWidth - 100) / total) * timelineZoom : 50;
 
-  // ─── Vorschau: Overlays + Auswahl zeichnen ───────────────────────────────
+  // ─── Preview: draw overlays + selection ─────────────────────────────────
 
   const selectedZoom = selected?.kind === "zoom" ? project.zooms.find(z => z.id === selected.id) : null;
   const selectedOverlay = selected?.kind === "overlay" ? project.overlays.find(o => o.id === selected.id) : null;
@@ -321,7 +321,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
 
     project.overlays.filter(o => isVisible(o, time) || o.id === selectedOverlay?.id)
       .forEach(o => {
-        ctx.globalAlpha = isVisible(o, time) ? 1 : 0.35; // ausgewählt, aber gerade nicht sichtbar
+        ctx.globalAlpha = isVisible(o, time) ? 1 : 0.35; // selected but not visible right now
         drawOverlay(ctx, o, W, H, imagesRef.current);
       });
     ctx.globalAlpha = 1;
@@ -357,11 +357,11 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     }
   }, [project.overlays, time, frameSize, selectedOverlay, selectedZoom, imagesVersion]);
 
-  // Zoom in der Vorschau per CSS (gleiche Formel wie beim Export); beim Bearbeiten eines Zooms aus
+  // Zoom in the preview via CSS (same formula as the export); off while editing a zoom
   const zoomState = selectedZoom ? { z: 1, x: 0, y: 0 } : zoomAt(project.zooms, time);
   const zoomTransform = `translate(${-zoomState.x * zoomState.z * 100}%, ${-zoomState.y * zoomState.z * 100}%) scale(${zoomState.z})`;
 
-  // ─── Overlays/Zoom im Vorschaubild verschieben ───────────────────────────
+  // ─── Move overlays/zoom in the preview ──────────────────────────────────
 
   const onFramePointerDown = (e) => {
     if (e.button !== 0) return;
@@ -377,7 +377,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
       if (hit) target = { kind: "zoom", item: selectedZoom, mode: hit.mode };
     }
     if (!target) {
-      // ausgewähltes Overlay zuerst prüfen, damit verdeckte Griffe erreichbar bleiben
+      // check the selected overlay first, so covered handles stay reachable
       const candidates = p.overlays
         .filter(o => isVisible(o, timeRef.current) || o.id === selectedOverlay?.id)
         .sort((a, b) => (a.id === selectedOverlay?.id) - (b.id === selectedOverlay?.id));
@@ -414,7 +414,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
       live(q => P.updateItem(q, target.kind, o.id, patch));
     };
     const up = () => {
-      if (!moved) historyRef.current.pop(); // nur ausgewählt, nichts geändert
+      if (!moved) historyRef.current.pop(); // only selected, nothing changed
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
@@ -422,7 +422,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     window.addEventListener("pointerup", up);
   };
 
-  // ─── Timeline-Ziehen ─────────────────────────────────────────────────────
+  // ─── Timeline dragging ──────────────────────────────────────────────────
 
   const onTimelineDrag = (kind, id, mode, dt, phase) => {
     const p = projectRef.current;
@@ -448,7 +448,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
 
   // ─── Werkzeuge ───────────────────────────────────────────────────────────
 
-  // Lädt einen Clip hoch; Promise liefert die Server-ID
+  // Uploads a clip; the promise returns the server ID
   const uploadClip = (file, clipId) => {
     setUploads(u => ({ ...u, [clipId]: 0 }));
     const done = () => setUploads(u => { const { [clipId]: _, ...rest } = u; return rest; });
@@ -482,7 +482,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     return promise;
   };
 
-  // Server-ID eines Clips; wartet auf laufenden Upload oder lädt (erneut) hoch
+  // Server ID of a clip; waits for a running upload or uploads (again)
   const ensureClipOriginal = async (clipId, forceNew = false) => {
     if (clipId === "main") return ensureMainOriginal(forceNew);
     if (desktop) {
@@ -495,7 +495,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
       try {
         return await entry.promise;
       } catch {
-        // fehlgeschlagen -> neu hochladen
+        // failed -> upload again
       }
     }
     return uploadClip(entry.file, clipId);
@@ -531,7 +531,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
       }
       return;
     }
-    // wie im Schneiden-Tab: Dialog im Videos-Ordner starten
+    // as in the trim tab: open the dialog in the Videos folder
     if (window.showOpenFilePicker) {
       try {
         const [handle] = await window.showOpenFilePicker({
@@ -581,7 +581,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     setSelected({ kind: "zoom", id: item.id });
   };
 
-  // Teilt den ausgewählten Ton-Abschnitt, sonst die Videospur am Playhead
+  // Splits the selected audio segment, otherwise the video track at the playhead
   const split = () => {
     const p = projectRef.current;
     const t = timeRef.current;
@@ -618,7 +618,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
 
   const updateSelected = (patch) => commit(p => P.updateItem(p, selected.kind, selected.id, patch));
 
-  // Zuschnitt in freiem Format für das ganze Projekt; jeder Zug am Rahmen ist ein Rückgängig-Schritt
+  // Free-shape crop for the whole project; every drag of the box is an undo step
   const toggleCrop = () => {
     if (cropEditing) {
       setCropEditing(false);
@@ -654,7 +654,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
 
   // ─── Export ──────────────────────────────────────────────────────────────
 
-  // Ton, der erst hinter dem Videoende beginnt, landet nicht im Video
+  // Audio that only starts after the video ends doesn't end up in the video
   const audioInVideo = audio.some(s => s.tlStart < total);
   const estimatedBytes = exportOutput === "audio"
     ? AUDIO_ONLY_KBPS * 1000 / 8 * P.audioDuration(project)
@@ -668,7 +668,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     setPlaying(false);
     setExporting(true);
     try {
-      // Alle Clips müssen auf dem Server sein (wartet auf laufende Uploads, wiederholt fehlgeschlagene)
+      // All clips must be on the server (waits for running uploads, retries failed ones)
       const clipIds = Object.keys(project.clips);
       const ensureAll = async (forceIds = []) => {
         if (clipIds.some(id => forceIds.includes(id) || !originalIds[id])) setMessage("Uploading clips…");
@@ -710,7 +710,7 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
 
       setMessage(exportOutput === "audio" ? "Exporting audio…" : "Rendering video…");
       let result = await render(body);
-      // Server kennt Clips nicht mehr (abgelaufen / neu gestartet): neu hochladen, nochmal versuchen
+      // The server no longer knows some clips (expired / restarted): upload again, try again
       if (result.status !== "success" && result.missing?.length) {
         const forceIds = clipIds.filter(id => result.missing.includes(ids[id]));
         try {
@@ -756,9 +756,9 @@ export default function Editor({ api, platform, settings, mainClip, ensureMainOr
     }
   };
 
-  // ─── Eigenschaften des ausgewählten Elements ─────────────────────────────
+  // ─── Properties of the selected item ────────────────────────────────────
 
-  // Tempo eines Video- oder Ton-Abschnitts; für ein Stück: vorher mit „Split“ abtrennen
+  // Speed of a video or audio segment; for a part of it, cut it off with "Split" first
   const speedPicker = (s) => (
     <div className="ed-prop ed-speed" role="radiogroup" aria-label="Speed">
       <span>Speed</span>

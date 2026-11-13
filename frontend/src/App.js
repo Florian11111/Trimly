@@ -20,8 +20,8 @@ import { useUndo } from "./lib/useUndo";
 import { isDesktop, loadPlatform } from "./platform";
 import { API } from "./platform/web";
 
-// Editor als eigenes Bundle: wird erst geladen, wenn man in die Nähe des Tabs kommt,
-// damit der Start (Trim-Ansicht) schlank bleibt
+// Editor as its own bundle: only loaded when you get near its tab,
+// so the start (trim view) stays lean
 const loadEditor = () => import("./editor/Editor");
 const Editor = lazy(loadEditor);
 
@@ -37,7 +37,7 @@ export default function App() {
 
   const [video, setVideo] = useState(null); // { name, size, src, ref, dispose }
   const [meta, setMeta] = useState(null); // { duration, width, height }
-  const [upload, setUpload] = useState(null); // Web: Upload-Fortschritt 0–100
+  const [upload, setUpload] = useState(null); // web: upload progress 0–100
   const [range, setRange] = useState([0, 0]);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -46,12 +46,12 @@ export default function App() {
   const [volume, setVolume] = useState(1);
   const [output, setOutput] = useState("both"); // both | video | audio
 
-  // Lautstärke nur fürs Abspielen (ändert den Export nicht), über Neustarts gemerkt
+  // Volume for playback only (doesn't change the export), remembered across restarts
   const [playerVolume, setPlayerVolume] = useState(loadPlayerVolume);
   const [playerMuted, setPlayerMuted] = useState(false);
 
   // { state: running|computed|done|error, progress, computeOnly, result, message }
-  // computed: „Nur berechnen“ ist fertig, Export legt das Ergebnis ohne neues Kodieren ab
+  // computed: "Compute only" is done, export saves the result without encoding again
   const [job, setJob] = useState(null);
   const jobRef = useRef(job);
   jobRef.current = job;
@@ -59,9 +59,9 @@ export default function App() {
   const platformRef = useRef(null);
   platformRef.current = platform;
   const [dragging, setDragging] = useState(false);
-  // Datei aus „Öffnen mit“, während schon ein Video offen ist: erst nachfragen
+  // File from "Open with" while a video is already open: ask first
   const [pendingOpen, setPendingOpen] = useState(null);
-  // Editor-Tab (Web: Backend rendert, Desktop: src-tauri/src/edit.rs)
+  // Editor tab (web: the backend renders, desktop: src-tauri/src/edit.rs)
   const [tab, setTab] = useState("trim"); // trim | edit
   const [editorOpened, setEditorOpened] = useState(false);
   const [originalId, setOriginalId] = useState(null);
@@ -73,7 +73,7 @@ export default function App() {
   const videoOpenRef = useRef(false);
   videoOpenRef.current = !!video;
 
-  // Rückgängig / Wiederholen für Ausschnitt und Export-Einstellungen
+  // Undo / redo for the selection and export settings
   const applySnapshot = useCallback((s) => {
     setRange(s.range);
     setQuality(s.quality);
@@ -83,7 +83,7 @@ export default function App() {
   const history = useUndo({ range, quality, volume, output }, applySnapshot);
   const { rebase } = history;
 
-  // ─── Plattform laden ────────────────────────────────────────────────────
+  // ─── Load the platform ──────────────────────────────────────────────────
 
   useEffect(() => {
     let alive = true;
@@ -93,7 +93,7 @@ export default function App() {
     };
   }, []);
 
-  // Encoder-Anzeige folgt Format und Gerät aus den Einstellungen
+  // The encoder label follows format and device from the settings
   useEffect(() => {
     platform
       ?.encoderInfo?.({ codec: settings.codec, encoder: settings.encoder })
@@ -103,10 +103,10 @@ export default function App() {
 
   const log = useCallback((message) => platform?.log?.(message), [platform]);
 
-  // ─── Video öffnen ───────────────────────────────────────────────────────
+  // ─── Open a video ───────────────────────────────────────────────────────
 
-  // Alles vom vorigen Video verwerfen: Datei, Ausschnitt, Einstellungen, Ergebnis.
-  // `next` ersetzt das alte Video im selben Render, damit kein leerer Zwischenstand aufblitzt.
+  // Discard everything from the previous video: file, selection, settings, result.
+  // `next` replaces the old video in the same render, so no empty state flashes up.
   const resetAll = useCallback((next = null) => {
     setVideo((prev) => {
       if (prev !== next) prev?.dispose?.();
@@ -132,7 +132,7 @@ export default function App() {
     async (source) => {
       if (!platform || !source) return;
       try {
-        // Erst öffnen, dann altes Video samt Einstellungen in einem Schritt ersetzen
+        // Open first, then replace the old video and its settings in one step
         const next = await platform.open(source, { onUploadProgress: setUpload });
         log(`opened: ${next.name} ${JSON.stringify(next.ref?.info || {})}`);
         resetAll(next);
@@ -147,12 +147,12 @@ export default function App() {
     if (!platform) return;
     const picked = await platform.pick();
     if (picked) openVideo(picked);
-    // null: Web ohne File System Access API → normales Dateifeld; undefined: abgebrochen
+    // null: web without the File System Access API → normal file input; undefined: cancelled
     else if (picked === null && platform.kind === "web") inputRef.current?.click();
   };
 
-  // ⌘O / Strg+O und das macOS-Menü: Auswahl öffnen; erst wenn eine Datei gewählt ist, ersetzt
-  // sie das alte Video komplett. Abbrechen lässt alles, wie es war.
+  // ⌘O / Ctrl+O and the macOS menu: open the picker; only once a file is chosen does it
+  // replace the old video completely. Cancelling leaves everything as it was.
   const chooseFileRef = useRef(chooseFile);
   chooseFileRef.current = chooseFile;
   const runningRef = useRef(false);
@@ -172,7 +172,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e) => {
-      // Auf dem Mac-Desktop fängt das Menü ⌘O ab
+      // In the Mac desktop app the menu catches ⌘O
       if (platform?.onMenuOpen && IS_MAC) return;
       if ((e.ctrlKey || e.metaKey) && e.code === "KeyO" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
@@ -183,17 +183,17 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [platform]);
 
-  // Home: zurück zum Startbildschirm, das aktuelle Video wird verworfen
+  // Home: back to the start screen, the current video is discarded
   const goHome = () => resetAll(null);
 
-  // Desktop: Datei aus „Öffnen mit“ oder der Kommandozeile (`Trimly video.mp4`)
+  // Desktop: file from "Open with" or the command line (`Trimly video.mp4`)
   useEffect(() => {
     platform?.initialFile?.().then((path) => path && openVideo(path)).catch(() => {});
-    // nur einmal nach dem Laden der Plattform
+    // only once after the platform has loaded
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platform]);
 
-  // „Öffnen mit Trimly“, während die App schon läuft: bei offenem Video erst nachfragen
+  // "Open with Trimly" while the app is running: ask first if a video is open
   useEffect(() => {
     if (!platform?.onOpenFile) return undefined;
     let unlisten;
@@ -207,7 +207,7 @@ export default function App() {
     };
   }, [platform, openVideo]);
 
-  // Desktop: Drag & Drop aus dem Explorer/Finder kommt über Tauri, nicht als DOM-Event
+  // Desktop: drag & drop from Explorer/Finder comes through Tauri, not as a DOM event
   useEffect(() => {
     if (!platform?.onDragDrop) return undefined;
     let unlisten;
@@ -245,8 +245,8 @@ export default function App() {
 
   // ─── Wiedergabe ─────────────────────────────────────────────────────────
 
-  // Abmessungen von ffprobe (Desktop) sind verlässlicher als die des Players,
-  // der sie bei manchen Videos erst später oder gar nicht meldet.
+  // Dimensions from ffprobe (desktop) are more reliable than the player's,
+  // which reports them late or not at all for some videos.
   const onLoadedMetadata = () => {
     const v = videoRef.current;
     const info = video?.ref?.info;
@@ -258,7 +258,7 @@ export default function App() {
       height: info?.height || v.videoHeight,
     });
     setRange([0, duration]);
-    // Der volle Ausschnitt ist der Ausgangspunkt, nicht ein Schritt zum Rückgängigmachen
+    // The full selection is the starting point, not an undo step
     rebase((s) => ({ ...s, range: [0, duration] }));
   };
 
@@ -298,7 +298,7 @@ export default function App() {
     v.play().catch(() => {});
   }, []);
 
-  // Flüssiger Abspielkopf; hält am Ende des Ausschnitts an
+  // Smooth playhead; stops at the end of the selection
   useEffect(() => {
     if (!playing) return undefined;
     let raf;
@@ -324,7 +324,7 @@ export default function App() {
     setRange(([s]) => [s, Math.max(videoRef.current?.currentTime ?? 0, s + MIN_CLIP)]);
   }, []);
 
-  // Strg+Z / Strg+Y / Strg+Umschalt+Z (Cmd auf dem Mac). In Textfeldern bleibt das eigene Rückgängig.
+  // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z (Cmd on the Mac). Text fields keep their own undo.
   const { undo, redo } = history;
   useEffect(() => {
     if (!video || tab !== "trim") return undefined;
@@ -347,7 +347,7 @@ export default function App() {
   useEffect(() => {
     if (!meta || tab !== "trim") return undefined;
     const onKey = (e) => {
-      if (e.ctrlKey || e.metaKey) return; // Kürzel wie Strg+Z gehören dem Verlauf
+      if (e.ctrlKey || e.metaKey) return; // shortcuts like Ctrl+Z belong to the history
       if (e.target.closest?.("input, select, textarea, [role=slider], .settings, .modal")) return;
       const v = videoRef.current;
       if (!v) return;
@@ -389,7 +389,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [meta, seek, togglePlay, setIn, setOut, tab]);
 
-  // Server-ID des Originals für den Editor (ändert sich bei einem Neu-Upload)
+  // Server ID of the original for the editor (changes when it is uploaded again)
   useEffect(() => {
     let alive = true;
     video?.ref?.uploaded?.then((id) => alive && setOriginalId(id)).catch(() => {});
@@ -409,7 +409,7 @@ export default function App() {
   // ─── Export ─────────────────────────────────────────────────────────────
 
   const desktop = platform?.kind === "desktop";
-  // Die Web-Version kodiert auf dem Server immer H.264
+  // The web version always encodes H.264 on the server
   const codec = desktop ? settings.codec : "h264";
   const setQ = (patch) => setQuality((q) => ({ ...q, ...patch }));
 
@@ -433,7 +433,7 @@ export default function App() {
   const estimate = source ? estimateBytes(target, clipLength, source, output) : 0;
   const hasAudio = video?.ref?.info ? video.ref.info.hasAudio : true;
 
-  // Player-Regler × Export-Lautstärke mithören (Browser kann nicht über 100 % gehen)
+  // Hear player slider × export volume (the browser can't go above 100 %)
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -445,11 +445,11 @@ export default function App() {
     try {
       window.localStorage.setItem(PLAYER_VOLUME_KEY, String(playerVolume));
     } catch {
-      // ohne Speicher eben nicht gemerkt
+      // without storage it just isn't remembered
     }
   }, [playerVolume]);
 
-  // Alles, wovon ein Ergebnis abhängt. Ändert sich etwas, ist ein altes Ergebnis ungültig.
+  // Everything a result depends on. If anything changes, an old result is invalid.
   const paramsKey = JSON.stringify([
     video?.src,
     range,
@@ -469,7 +469,7 @@ export default function App() {
   }, [paramsKey]);
 
 
-  // Video ohne Tonspur: nur Video exportieren
+  // Video without audio: export video only
   useEffect(() => {
     if (!hasAudio) {
       setOutput("video");
@@ -477,8 +477,8 @@ export default function App() {
     }
   }, [hasAudio, rebase]);
 
-  // computeOnly: kodieren, aber nicht speichern („Nur berechnen“, zeigt die genaue Größe).
-  // Liegt so ein Ergebnis vor und hat sich nichts geändert, speichert Export es sofort.
+  // computeOnly: encode but don't save ("Compute only", shows the exact size).
+  // If such a result exists and nothing changed, export saves it right away.
   const runExport = async ({ askLocation = false, computeOnly = false } = {}) => {
     if (!platform || !video || !target) return;
     setExportMenuOpen(false);
@@ -490,7 +490,7 @@ export default function App() {
         if (result) setJob({ state: "done", result });
         return;
       } catch (e) {
-        // Web: Server hat das Ergebnis schon gelöscht → normal neu exportieren
+        // Web: the server already deleted the result → export again as usual
         if (e.message !== "expired") {
           setJob({ state: "error", message: e.message || String(e) });
           return;
@@ -507,7 +507,7 @@ export default function App() {
         volume,
         target,
         output,
-        // Zielgröße hart einhalten (Desktop kodiert nach, wenn der Encoder darüber liegt)
+        // Enforce the target size (desktop re-encodes if the encoder overshoots)
         maxBytes:
           quality.mode === "size" && output !== "audio" && Number(quality.sizeMb) > 0
             ? Math.floor(Number(quality.sizeMb) * 1024 * 1024)
@@ -520,7 +520,7 @@ export default function App() {
       };
       if (computeOnly) {
         const result = await platform.computeVideo(video, exportJob, opts);
-        // Während des Rechnens etwas geändert (oder anderes Video): Ergebnis passt nicht mehr
+        // Something changed while encoding (or another video): the result no longer fits
         if (paramsKeyRef.current !== key) {
           platform.discardComputed?.(result);
           setJob((j) => (j?.state === "running" ? null : j));
@@ -537,7 +537,7 @@ export default function App() {
     }
   };
 
-  // Export-Menü schließt bei Klick daneben und mit Escape
+  // The export menu closes on an outside click and with Escape
   useEffect(() => {
     if (!exportMenuOpen) return undefined;
     const onDown = (e) => {
@@ -603,7 +603,7 @@ export default function App() {
                 aria-selected={tab === id}
                 className={`tab ${tab === id ? "is-active" : ""}`}
                 onClick={() => switchTab(id)}
-                // vorab laden, damit der Wechsel ohne Wartezeit klappt
+                // preload so switching has no wait
                 onPointerEnter={id === "edit" ? loadEditor : undefined}
                 onFocus={id === "edit" ? loadEditor : undefined}
               >
@@ -672,7 +672,7 @@ export default function App() {
         </main>
       ) : (
         <>
-        {/* Trim bleibt beim Tabwechsel erhalten (Marker, Einstellungen) */}
+        {/* Trim is kept when switching tabs (markers, settings) */}
         <main
           key={video.src}
           className={`workspace ${dragging ? "is-dragging" : ""}`}
@@ -735,7 +735,7 @@ export default function App() {
                   aria-label="Player volume"
                 />
               </span>
-              {/* Rückgängig/Wiederholen hier nur per Tastatur, Knöpfe gibt es im Editor */}
+              {/* Undo/redo here only by keyboard, the editor has buttons */}
               <span className="marks">
                 <button className="mark" onClick={setIn} disabled={!meta} title="Set start to playhead (I)">
                   <span className="mark-label">Start</span>
@@ -1069,7 +1069,7 @@ export default function App() {
                       name: video.name,
                       duration: meta.duration,
                       path: desktop ? video.ref.path : null,
-                      // Desktop: der Dateipfad ist die „ID“, es wird nichts hochgeladen
+                      // Desktop: the file path is the "ID", nothing is uploaded
                       originalId: desktop ? video.ref.path : originalId,
                     }
                   : null
@@ -1133,7 +1133,7 @@ function Progress({ value, label }) {
   );
 }
 
-// Lautsprecher (mit Ton), durchgestrichener Lautsprecher (ohne Ton), Note (nur Ton)
+// Speaker (with audio), crossed-out speaker (no audio), note (audio only)
 function OutputIcon({ kind }) {
   const speaker = <path d="M3 9.5h3l4-3.5v12l-4-3.5H3z" fill="currentColor" />;
   return (
@@ -1192,7 +1192,7 @@ const GearIcon = () => (
   </svg>
 );
 
-// Kleiner Pfeil nach oben: das Export-Menü öffnet sich über dem Knopf
+// Small upward arrow: the export menu opens above the button
 const ChevronIcon = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />

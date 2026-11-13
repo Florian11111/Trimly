@@ -1,6 +1,6 @@
 import { fileExtension, fileStem } from "../lib/format";
 
-// Leer (Prod) → relative URLs über nginx; nicht gesetzt (Dev) → lokales Backend.
+// Empty (production) → relative URLs through nginx; not set (dev) → local backend.
 export const API =
   process.env.REACT_APP_API_URL !== undefined
     ? process.env.REACT_APP_API_URL
@@ -47,7 +47,7 @@ function uploadOriginal(file, onUploadProgress) {
   });
 }
 
-// Direkter Link: der Browser streamt die Datei auf die Platte, statt sie im RAM zu puffern
+// Direct link: the browser streams the file to disk instead of buffering it in RAM
 function triggerDownload(filename, downloadName) {
   const a = document.createElement("a");
   a.href = `${API}/download/${encodeURIComponent(filename)}?name=${encodeURIComponent(downloadName)}`;
@@ -78,8 +78,8 @@ export function createWebPlatform() {
   return {
     kind: "web",
 
-    // Chrome/Edge: Dialog im Videos-Ordner starten (dort speichern NVIDIA App und AMD ReLive).
-    // Ohne File System Access API: null → die App nutzt das normale <input type=file>.
+    // Chrome/Edge: open the dialog in the Videos folder (where the NVIDIA app and AMD ReLive save).
+    // Without the File System Access API: null → the app uses the normal <input type=file>.
     async pick() {
       if (!window.showOpenFilePicker) return null;
       try {
@@ -90,7 +90,7 @@ export function createWebPlatform() {
         });
         return await handle.getFile();
       } catch (e) {
-        if (e.name === "AbortError") return undefined; // abgebrochen: nichts tun
+        if (e.name === "AbortError") return undefined; // cancelled: do nothing
         return null;
       }
     },
@@ -101,8 +101,8 @@ export function createWebPlatform() {
       }
       const src = URL.createObjectURL(file);
       const ref = { file, uploaded: null };
-      // Original hochladen; schlägt es fehl oder ist es auf dem Server abgelaufen,
-      // lädt der Export es automatisch neu hoch
+      // Upload the original; if that fails or it expired on the server,
+      // the export uploads it again automatically
       ref.ensureUploaded = (force = false) => {
         if (force || !ref.uploaded) {
           onUploadProgress?.(0);
@@ -127,8 +127,8 @@ export function createWebPlatform() {
       return this.saveComputed(await this.computeVideo(video, job, opts));
     },
 
-    // Fertiges Ergebnis herunterladen. Der Server löscht es 30 min nach Fertigstellung;
-    // ist es weg, wirft das einen Fehler und die App rechnet neu.
+    // Download the finished result. The server deletes it 30 min after it is done;
+    // if it is gone, this throws and the app encodes again.
     async saveComputed({ filename, savedAs, size }) {
       const state = await (await fetch(`${API}/check/${encodeURIComponent(filename)}`)).json();
       if (state.status !== "ready") throw new Error("expired");
@@ -136,10 +136,10 @@ export function createWebPlatform() {
       return { size, savedAs };
     },
 
-    // Nichts zu tun: der Server räumt selbst auf
+    // Nothing to do: the server cleans up by itself
     async discardComputed() {},
 
-    // Auf dem Server kodieren, aber noch nicht herunterladen
+    // Encode on the server, but don't download yet
     async computeVideo(video, job, { onProgress } = {}) {
       onProgress?.(null);
       const ref = video.ref;
@@ -148,21 +148,21 @@ export function createWebPlatform() {
       const send = (id) => fetch(`${API}/process`, { method: "POST", body: processForm(id, job) });
       let data = await (await send(originalId)).json();
       if (data.status === "missing") {
-        // Server kennt das Original nicht mehr (abgelaufen oder neu gestartet)
+        // The server no longer knows the original (expired or restarted)
         originalId = await ref.ensureUploaded(true);
         data = await (await send(originalId)).json();
       }
       if (data.status !== "success") throw new Error(data.message || "The server refused the export.");
 
       const filename = data.filename;
-      // Kein festes Zeitlimit: lange Videos dauern
+      // No fixed time limit: long videos take time
       for (;;) {
         await sleep(POLL_MS);
         let state;
         try {
           state = await (await fetch(`${API}/check/${encodeURIComponent(filename)}`)).json();
         } catch {
-          continue; // kurzer Netzwerkfehler: weiter versuchen
+          continue; // brief network error: keep trying
         }
         if (state.status === "ready") {
           const ext = job.output === "audio" ? "mp3" : fileExtension(video.name) || "mp4";

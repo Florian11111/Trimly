@@ -1,4 +1,4 @@
-// Einzige Quelle für Preset-Werte: wird angezeigt UND ans Backend gesendet
+// Single source of the editor presets: shown in the UI AND sent to the backend
 export const PRESETS = {
   low:    { label: "Small",  fps: 24, resolution: "854x480",   bitrate: 1000 },
   medium: { label: "Medium", fps: 30, resolution: "1280x720",  bitrate: 2500 },

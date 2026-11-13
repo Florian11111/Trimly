@@ -68,7 +68,7 @@ class VideoCalculatorFixesSpec extends AnyFunSuite {
     val out = File.createTempFile("tiny", ".mp4")
     val result = Await.result(VideoCalculator.process(conversion(out, 10000, Some(0.01))), 2.minutes)
     out.delete()
-    assert(result.left.exists(_.contains("zu klein")), result)
+    assert(result.left.exists(_.contains("too small")), result)
   }
 
   test("maxSizeMb keeps output below the limit") {
@@ -128,7 +128,7 @@ class VideoCalculatorFixesSpec extends AnyFunSuite {
     val probed = FFmpegUtils.getVideoInfo(out.getAbsolutePath)
     out.delete()
     assert(result.isRight, result)
-    // Auflösung bleibt beim Original (2560x1440), obwohl 320x180 angefragt war
+    // Resolution stays at the original (2560x1440) although 320x180 was requested
     assert(probed.toOption.map(i => (i.width, i.height)).contains((2560, 1440)), probed)
   }
 }

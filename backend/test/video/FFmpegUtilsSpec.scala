@@ -18,7 +18,7 @@ class FFmpegUtilsSpec extends AnyFunSuite {
       val result = FFmpegUtils.getVideoInfo(testFile.getAbsolutePath)
       assert(result.isRight)
       val info = result.right.get
-      // weitere sinnvolle Checks, z.B.:
+      // further useful checks, e.g.:
       assert(info.duration > 0)
     }
   }

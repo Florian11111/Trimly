@@ -11,7 +11,7 @@ import scala.concurrent.{Future, ExecutionContext}
 
 object VideoCalculator {
 
-  // Feste Audio-Bitrate (kbps), wird auch in FFmpegUtils gesetzt
+  // Fixed audio bitrate (kbit/s), also set in FFmpegUtils
   val AudioBitrateKbps = 128
 
   def process(
@@ -26,7 +26,7 @@ object VideoCalculator {
       val width = videoConversion.width.orElse(Some(info.width)).getOrElse(0)
       val height = videoConversion.height.orElse(Some(info.height)).getOrElse(0)
 
-      // Nie mehr FPS als die Quelle hat, sonst werden nur Frames dupliziert
+      // Never more fps than the source, otherwise frames are only duplicated
       val requestedFps = videoConversion.framerate.getOrElse(info.fps)
       val fps =
         if (info.fps > 0 && requestedFps > info.fps) info.fps
@@ -45,17 +45,17 @@ object VideoCalculator {
       }
 
       val usedBitrate = videoConversion.bitrate
-        .orElse(Some(info.streamBitRate.toLong / 1000)) // ffprobe liefert bit/s
+        .orElse(Some(info.streamBitRate.toLong / 1000)) // ffprobe reports bit/s
         .filter(_ > 0)
         .map(b => Math.min(b, normalBitrate))
         .getOrElse(normalBitrate)
 
-      // Browser und ffprobe melden die Dauer minimal unterschiedlich -> auf Videolänge begrenzen
+      // Browser and ffprobe report slightly different durations -> clamp to the video length
       val durationMs = (info.duration * 1000).toInt
       val startMs = videoConversion.startTime.getOrElse(0)
       val endMs = Math.min(videoConversion.endTime.getOrElse(durationMs), durationMs)
 
-      // Größenlimit: Videobitrate so wählen, dass Video + Audio in maxSizeMb passen (5% Reserve für Container)
+      // Size limit: pick the video bitrate so video + audio fit into maxSizeMb (5% reserve for the container)
       val sizeLimitedBitrate: Option[Long] = videoConversion.maxSizeMb.filter(_ > 0 && !videoConversion.audioOnly).map { mb =>
         val seconds = Math.max(endMs - startMs, 1) / 1000.0
         val totalKbps = mb * 1024 * 1024 * 8 / 1000 / seconds
@@ -69,7 +69,7 @@ object VideoCalculator {
       else if (endMs <= startMs)
         Left("End time must be after start time.")
       else if (sizeLimitedBitrate.exists(_ < 100))
-        Left(s"Zielgröße von ${videoConversion.maxSizeMb.get} MB ist für diese Länge zu klein.")
+        Left(s"A target size of ${videoConversion.maxSizeMb.get} MB is too small for this length.")
       else {
         val adjustedConversion = videoConversion.copy(
           startTime = Some(startMs),
@@ -113,10 +113,10 @@ object VideoCalculator {
     }
     // test if the target size is less then 1/10 of the current size
     if (targetSize < currentSizeBytes /10) {
-      return Left(s"Current Target size is too small: ${currentSizeBytes} bytes (less 10% of original).")
+      return Left(s"Current Target size is too small: ${currentSizeBytes} bytes (less than 10% of the original).")
     } 
     
-    // video lenght ----------------------------
+    // video length ----------------------------
 
     // calculate the target length in ms
     val lengthMultiplier = calculatLenghtMultiplier(inputFile, outputDir, params, infoOpt)
@@ -190,14 +190,14 @@ object VideoCalculator {
 
     if (framerate <= 0) return Left("Invalid framerate.")
 
-    // Wenn Original-FPS > 30 → Ziel ist 30, aber nur halber Einfluss (realistischer)
+    // Original fps > 30 → target is 30, but with only half the effect (more realistic)
     if (framerate > 30) {
       val theoreticalReduction = 30.0 / framerate
-      val effectiveMultiplier = 1.0 - ((1.0 - theoreticalReduction) * 0.5) // nur halber Effekt
+      val effectiveMultiplier = 1.0 - ((1.0 - theoreticalReduction) * 0.5) // only half the effect
       return Right((effectiveMultiplier, 30.0))
     }
 
-    // Wenn Ziel-FPS schon gesetzt ist
+    // Target fps already set
     params.framerate match {
       case Some(targetFps) if targetFps < framerate =>
         val theoreticalReduction = targetFps / framerate

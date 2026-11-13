@@ -1,11 +1,11 @@
-//! Kleiner HTTP-Server auf 127.0.0.1, über den die Oberfläche Videos abspielt.
+//! Small HTTP server on 127.0.0.1 that the UI plays videos from.
 //!
-//! Tauris Asset-Protokoll beantwortet Range-Anfragen mit höchstens 1 MB. Bei
-//! langen Videos ist allein der Index (`moov`) größer, dann zeigt WebKit kein
-//! Bild. Dieser Server streamt beliebige Ranges direkt aus der Datei.
+//! Tauri's asset protocol answers range requests with at most 1 MB. For
+//! long videos the index (`moov`) alone is bigger, and WebKit then shows no
+//! picture. This server streams any range straight from the file.
 //!
-//! Sicherheit: nur Loopback, zufälliges Token in jeder URL, und es werden nur
-//! Dateien ausgeliefert, die vorher mit `register` freigegeben wurden.
+//! Security: loopback only, a random token in every URL, and only files
+//! that were allowed beforehand with `register` are served.
 
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ impl MediaServer {
         Ok(Self { port, token, files, next_id: Mutex::new(0) })
     }
 
-    /// Gibt eine Datei frei und liefert die URL, unter der sie abspielbar ist.
+    /// Allows a file and returns the URL it can be played from.
     pub fn register(&self, path: &Path) -> String {
         let mut next = self.next_id.lock().unwrap();
         *next += 1;
@@ -68,11 +68,11 @@ impl MediaServer {
     }
 }
 
-/// Auswertung eines `Range`-Headers für eine Datei der Länge `len`.
-/// `None` = ganze Datei, `Some(Err)` = nicht erfüllbar, sonst inklusive Grenzen.
+/// Parses a `Range` header for a file of length `len`.
+/// `None` = whole file, `Some(Err)` = not satisfiable, otherwise inclusive bounds.
 pub fn parse_range(header: Option<&str>, len: u64) -> Option<Result<(u64, u64), ()>> {
     let spec = header?.trim().strip_prefix("bytes=")?;
-    // Mehrteilige Ranges braucht kein Player; nur die erste beachten
+    // No player needs multipart ranges; only the first one counts
     let first = spec.split(',').next()?.trim();
     let (a, b) = first.split_once('-')?;
     let range = match (a.trim(), b.trim()) {
@@ -171,7 +171,7 @@ fn handle(stream: TcpStream, token: &str, files: &Mutex<HashMap<String, PathBuf>
 
     if method == "GET" && count > 0 {
         f.seek(SeekFrom::Start(start))?;
-        // Bricht der Player ab (Sprung im Video), endet copy mit einem Fehler – normal
+        // If the player aborts (seeking in the video), copy ends with an error – that's normal
         let _ = io::copy(&mut f.take(count), &mut out);
     }
     Ok(())
@@ -219,7 +219,7 @@ mod tests {
         let server = MediaServer::start().unwrap();
         let url = server.register(&path);
 
-        // Größer als die 1 MB, an denen das Asset-Protokoll scheitert
+        // Bigger than the 1 MB the asset protocol fails at
         let (head, body) = get(&url, Some("bytes=100-4100099"));
         assert!(head.starts_with("HTTP/1.1 206"), "{head}");
         assert!(head.contains("Content-Range: bytes 100-4100099/5000000"));

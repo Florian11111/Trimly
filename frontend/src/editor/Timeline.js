@@ -1,6 +1,6 @@
 import React, { useRef } from "react";
 
-const EDGE = 7; // px am Rand eines Abschnitts zum Kürzen/Verlängern
+const EDGE = 7; // px at the edge of a segment for trimming/extending
 const LABEL_W = 80;
 
 const formatTime = (t) => {
@@ -13,7 +13,7 @@ function tickStep(pxPerSec) {
   return [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find(s => s * pxPerSec >= 60) || 600;
 }
 
-// Überlappende Einträge auf mehrere Zeilen verteilen
+// Spread overlapping entries over several rows
 function packLanes(items) {
   const lanes = [];
   const result = {};
@@ -26,7 +26,7 @@ function packLanes(items) {
   return { laneOf: result, count: Math.max(1, lanes.length) };
 }
 
-// „2× “ vor dem Namen, wenn ein Abschnitt nicht in Originaltempo läuft
+// "2× " before the name if a segment doesn't play at original speed
 const speedLabel = (s) => (s.speed && s.speed !== 1 ? `${s.speed}× ` : "");
 
 export const overlayLabel = (o) =>
@@ -45,7 +45,7 @@ export default function Timeline({
     return Math.max(0, Math.min(total, x / pxPerSec));
   };
 
-  // Klick/Ziehen auf freie Fläche oder Lineal: Abspielposition setzen
+  // Click/drag on empty space or the ruler: set the playback position
   const startScrub = (e) => {
     if (e.button !== 0) return;
     onSeek(timeFromClientX(e.clientX));

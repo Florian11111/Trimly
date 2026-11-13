@@ -1,4 +1,4 @@
-// exact: zwei Nachkommastellen für gemessene Größen (Schätzungen bleiben bei einer)
+// exact: two decimals for measured sizes (estimates keep one)
 export function formatBytes(bytes, { exact = false } = {}) {
   if (!bytes || bytes < 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];

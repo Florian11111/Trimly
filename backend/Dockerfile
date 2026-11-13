@@ -1,4 +1,4 @@
-# Verwende Debian als Basis für Scala/Play und installiere Java, ffmpeg sowie sbt per tarball
+# Debian base for Scala/Play with Java, ffmpeg and sbt (from the tarball)
 FROM debian:latest
 
 RUN apt-get update && apt-get install -y curl default-jre ffmpeg neovim && \
@@ -8,20 +8,20 @@ RUN apt-get update && apt-get install -y curl default-jre ffmpeg neovim && \
     rm -f /tmp/sbt.tgz && \
     ln -s /opt/sbt/bin/sbt /usr/local/bin/sbt
 
-# Setze das Arbeitsverzeichnis
+# Working directory
 WORKDIR /app
 
-# Kopiere die Projektdateien
+# Copy the project files
 COPY . .
 
-# Installiere Abhängigkeiten
+# Fetch dependencies
 RUN sbt update
 
-# Exponiere den Port
+# Port
 EXPOSE 9000
 
 
-# Starte die Anwendung mit sbt run
+# Start the app with sbt run
 CMD ["sbt", "run"]
 
 #comment to bield and run container
