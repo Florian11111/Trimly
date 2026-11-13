@@ -1,0 +1,66 @@
+# Tests bei jedem Push und Pull Request: Oberfläche (Jest), Desktop (Rust, mit echtem ffmpeg)
+# und Web-Backend (Scala). Alle drei laufen parallel auf Linux.
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (Jest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: CI=true npm test -- --watchAll=false
+
+  desktop:
+    name: Desktop (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux build dependencies and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev ffmpeg
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/src-tauri
+      # generate_context! erwartet den Ordner frontendDist, die Tests brauchen den Inhalt nicht
+      - run: mkdir -p frontend/build
+      - run: cargo test
+        working-directory: frontend/src-tauri
+
+  backend:
+    name: Backend (Scala)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+      - uses: sbt/setup-sbt@v1
+      - run: sbt -batch test

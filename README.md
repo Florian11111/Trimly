@@ -3,6 +3,10 @@
 <p align="center"><b>Cut it. Shrink it. Send it.</b></p>
 
 <p align="center">
+  <a href="https://github.com/Florian11111/Trimly/actions/workflows/test.yml"><img src="https://github.com/Florian11111/Trimly/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/Florian11111/Trimly/releases/latest">Download</a> ·
   <a href="#install">Install</a> ·
   <a href="#for-developers">Developers</a>

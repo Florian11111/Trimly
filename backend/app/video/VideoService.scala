@@ -96,7 +96,7 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
     }
   }
 
-  // ─── Kern-Verarbeitung (gemeinsam für store+process und legacy upload) ───
+  // ─── Kern-Verarbeitung (store + process) ───
 
   private def processFile(data: MultipartFormData[TemporaryFile], inputPath: String, baseName: String): Future[Either[String, String]] = {
     val startTime = data.dataParts.get("startTime").flatMap(_.headOption).flatMap(s => Try(s.toInt).toOption)
@@ -237,16 +237,6 @@ class VideoService @Inject()(actorSystem: ActorSystem)(implicit ec: ExecutionCon
   private def deleteRecursively(dir: File): Unit = {
     Option(dir.listFiles()).foreach(_.foreach(_.delete()))
     dir.delete()
-  }
-
-  // ─── Legacy: Upload mit Datei (Fallback falls kein Store verwendet) ──────
-
-  def handleUpload(data: MultipartFormData[TemporaryFile], video: MultipartFormData.FilePart[TemporaryFile]): Future[Either[String, String]] = {
-    println(s"[UPLOAD] Legacy upload: ${video.filename}  size=${video.ref.path.toFile.length()} bytes")
-    val suffix = Random.alphanumeric.take(10).mkString
-    val tmpFile = new File(processedDir, s"tmp_${suffix}.mp4")
-    video.ref.moveTo(tmpFile, replace = true)
-    processFile(data, tmpFile.getAbsolutePath, video.filename.stripSuffix(".mp4"))
   }
 
   // ─── Check / Download ────────────────────────────────────────────────────

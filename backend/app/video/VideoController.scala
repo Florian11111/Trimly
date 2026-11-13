@@ -68,23 +68,6 @@ class VideoController @Inject()(
     Ok(Json.obj("status" -> "success"))
   }
 
-  // Legacy: Upload mit Datei
-  def upload: Action[MultipartFormData[TemporaryFile]] = Action.async(parse.multipartFormData) { request =>
-    request.body.file("video").map { video =>
-      videoService.handleUpload(request.body, video).map {
-        case Right(filename) =>
-          println(s"[CONTROLLER] Upload erfolgreich: $filename")
-          Ok(Json.obj("status" -> "success", "filename" -> filename))
-        case Left(error) =>
-          println(s"[CONTROLLER] Upload Fehler: $error")
-          BadRequest(Json.obj("status" -> "error", "message" -> error))
-      }
-    }.getOrElse {
-      println(s"[CONTROLLER] Upload: kein Video gefunden")
-      Future.successful(BadRequest("Missing file"))
-    }
-  }
-
   def checkVideo(filename: String): Action[AnyContent] = Action {
     videoService.getStatus(filename) match {
       case Some(VideoStatus.Ready) =>

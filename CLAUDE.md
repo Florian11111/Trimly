@@ -61,7 +61,6 @@ Florian nutzt beides: Mac (M5) und Windows-PC mit AMD Radeon RX 9070 XT (AMF, ke
 | `GET /check/:filename` | `{status: ready, size}` / `computing` / `error` + `message` / `unknown` |
 | `GET /download/:filename?name=` | fertige Datei, gestreamt, mit Wunsch-Dateiname |
 | `POST /render`, `POST /keepalive` | Editor |
-| `POST /upload` | Legacy, vom Frontend nicht mehr benutzt |
 
 ## Starten und testen
 
@@ -79,7 +78,7 @@ cd frontend/src-tauri && cargo test                      # Rust, inkl. echtes ff
 docker compose run --rm backend sbt -batch test          # Scala
 ```
 
-Tests mit echtem Video nutzen `backend/test/resources/testVideo.mp4` (2560×1440, 60 fps, 19,05 s) und werden übersprungen, wenn es oder ffmpeg fehlt. In Scala Futures immer mit `Await`/`futureValue` auswerten, nie in `fut.map { assert }`.
+Tests mit echtem Video nutzen `backend/test/resources/testVideo.mp4` (2560×1440, 60 fps, 19,05 s, Stereo-Ton; künstlich erzeugt, 1,8 MB) und werden übersprungen, wenn es oder ffmpeg fehlt. Neu erzeugen: `ffmpeg -f lavfi -i "gradients=size=2560x1440:rate=60:duration=19.05:speed=0.02:seed=7" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=19.05" -ac 2 -c:v libx264 -preset slow -crf 40 -g 120 -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart -shortest testVideo.mp4`. `.github/workflows/test.yml` führt alle drei Testreihen bei jedem Push und PR auf Linux aus (Badge im README). In Scala Futures immer mit `Await`/`futureValue` auswerten, nie in `fut.map { assert }`.
 
 README-Screenshots in `docs/images/` stammen von Playwright/WebKit gegen `docker compose up`, mit einem neutralen, per `ffmpeg -f lavfi -i gradients=…` erzeugten Video (keine Spielszenen/Waffen). Als JPEG ablegen.
 
@@ -106,8 +105,7 @@ Lizenz: GPL-3.0-or-later (`LICENSE`), passend zum mitgelieferten libx264-ffmpeg.
 - Unter Windows aus Claudes Shell gestartete Installer landen in `AppData\Local\Packages\Claude_…\LocalCache` (MSIX-Umleitung), nicht in Florians echtem AppData. Installer daher von Florian per Doppelklick starten lassen.
 - Im Linux-Container gibt es kein VideoToolbox; der Server kann nur NVENC oder CPU.
 - Die Web-Version kennt die Bildrate der Quelle nicht und sendet die Preset-fps unverändert.
-- `backend/test/resources/testVideo.mp4` (63 MB) liegt im Git-Repo.
-- `backend/build.sc` (Mill) und `.g8/` sind Überbleibsel; gebaut wird mit sbt.
+- Die alte, 63 MB große `testVideo.mp4` steckt noch in der Git-Historie (Klonen lädt sie mit); loswerden ginge nur durch Umschreiben der Historie mit Force-Push.
 
 ## Konventionen
 
