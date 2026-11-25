@@ -1,0 +1,94 @@
+Windows Registry Editor Version 5.00
+
+; Repairs the Windows entries for .mp4, .m4v, .mov, .mkv, .webm and .avi that the
+; Trimly .msi of older versions removed on uninstall/update (no video thumbnails in Explorer anymore).
+; Also removes the leftovers of the old NSIS file associations.
+; Run by double-clicking (needs administrator rights), then restart Explorer or sign out.
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mp4]
+@="WMP11.AssocFile.MP4"
+"Content Type"="video/mp4"
+"PerceivedType"="video"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mp4\OpenWithProgIds]
+"WMP11.AssocFile.MP4"=hex(0):
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mp4\ShellEx\{BB2E617C-0920-11D1-9A0B-00C04FC2D6C1}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mp4\ShellEx\{e357fccd-a995-4576-b01f-234630154e96}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.m4v]
+@="WMP11.AssocFile.MP4"
+"Content Type"="video/x-m4v"
+"PerceivedType"="video"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.m4v\OpenWithProgIds]
+"WMP11.AssocFile.MP4"=hex(0):
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.m4v\ShellEx\{BB2E617C-0920-11D1-9A0B-00C04FC2D6C1}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.m4v\ShellEx\{e357fccd-a995-4576-b01f-234630154e96}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mov]
+@="WMP11.AssocFile.MOV"
+"Content Type"="video/quicktime"
+"PerceivedType"="video"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mov\OpenWithProgIds]
+"WMP11.AssocFile.MOV"=hex(0):
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mov\ShellEx\{BB2E617C-0920-11D1-9A0B-00C04FC2D6C1}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mov\ShellEx\{e357fccd-a995-4576-b01f-234630154e96}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mkv]
+@="WMP11.AssocFile.MKV"
+"Content Type"="video/x-matroska"
+"PerceivedType"="video"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mkv\OpenWithProgIds]
+"WMP11.AssocFile.MKV"=hex(0):
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mkv\ShellEx\{BB2E617C-0920-11D1-9A0B-00C04FC2D6C1}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.mkv\ShellEx\{e357fccd-a995-4576-b01f-234630154e96}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.webm]
+"Content Type"="video/webm"
+"PerceivedType"="video"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.webm\ShellEx\{BB2E617C-0920-11D1-9A0B-00C04FC2D6C1}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.webm\ShellEx\{e357fccd-a995-4576-b01f-234630154e96}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.avi]
+@="WMP11.AssocFile.AVI"
+"Content Type"="video/avi"
+"PerceivedType"="video"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.avi\OpenWithProgIds]
+"WMP11.AssocFile.AVI"=hex(0):
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.avi\ShellEx\{BB2E617C-0920-11D1-9A0B-00C04FC2D6C1}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+[HKEY_LOCAL_MACHINE\SOFTWARE\Classes\.avi\ShellEx\{e357fccd-a995-4576-b01f-234630154e96}]
+@="{9DBD2C50-62AD-11D0-B806-00C04FD706EC}"
+
+; Leftovers of the old per-user association (empty default that hides the entries above)
+[HKEY_CURRENT_USER\Software\Classes\.mp4]
+@=-
+"MP4-Video_backup"=-
+[HKEY_CURRENT_USER\Software\Classes\.m4v]
+@=-
+"MP4-Video_backup"=-
+[HKEY_CURRENT_USER\Software\Classes\.mov]
+@=-
+"QuickTime-Video_backup"=-
+[HKEY_CURRENT_USER\Software\Classes\.mkv]
+@=-
+"Matroska-Video_backup"=-
+[HKEY_CURRENT_USER\Software\Classes\.webm]
+@=-
+"WebM-Video_backup"=-
+[HKEY_CURRENT_USER\Software\Classes\.avi]
+@=-
+"AVI-Video_backup"=-
+[-HKEY_CURRENT_USER\Software\Classes\MP4-Video]
+[-HKEY_CURRENT_USER\Software\Classes\QuickTime-Video]
+[-HKEY_CURRENT_USER\Software\Classes\Matroska-Video]
+[-HKEY_CURRENT_USER\Software\Classes\WebM-Video]
+[-HKEY_CURRENT_USER\Software\Classes\AVI-Video]

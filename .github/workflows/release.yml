@@ -46,7 +46,7 @@ jobs:
           cat > "$RUNNER_TEMP/notes.md" <<EOF
           ## Download
 
-          - **Windows:** \`Trimly_…_x64-setup.exe\` (or the \`.msi\`). ffmpeg is included.
+          - **Windows:** \`Trimly_…_x64-setup.exe\`. ffmpeg is included.
           - **macOS 11+ (Apple Silicon):** \`Trimly_…_aarch64.dmg\`. ffmpeg is included.
           - **Linux:** \`Trimly_…_amd64.deb\` (Debian, Ubuntu; installs ffmpeg as a dependency), \`.rpm\` (Fedora; \`sudo dnf install ffmpeg\`) or \`.AppImage\` (any distribution; needs ffmpeg from your package manager). ARM64 builds are marked \`aarch64\`/\`arm64\`.
 

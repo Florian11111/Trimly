@@ -110,7 +110,7 @@ Then build the app:
 cd frontend && npm ci && npm run desktop:build
 ```
 
-The installer is in `frontend/src-tauri/target/release/bundle/nsis/`, an `.msi` in `bundle/msi/`.
+The installer is in `frontend/src-tauri/target/release/bundle/nsis/`.
 </details>
 
 <details>

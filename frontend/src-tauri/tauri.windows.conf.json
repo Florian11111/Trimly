@@ -4,6 +4,13 @@
     "beforeDevCommand": "set BROWSER=none&& npm start"
   },
   "bundle": {
-    "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"]
+    "targets": ["nsis"],
+    "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"],
+    "fileAssociations": [],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/hooks.nsh"
+      }
+    }
   }
 }
